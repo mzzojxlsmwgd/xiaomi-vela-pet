@@ -1,0 +1,23 @@
+# 依赖
+node_modules/
+
+# 构建产物
+dist/
+build/
+packages/
+
+# 签名密钥 —— 绝对不要提交
+sign/
+
+# 系统 / 编辑器
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log
+
+# 工具临时文件
+tools/_stories_tmp.mjs
+tools/_dlg_tmp.mjs
+tools/_char_tmp.mjs
+tools/.tmp/

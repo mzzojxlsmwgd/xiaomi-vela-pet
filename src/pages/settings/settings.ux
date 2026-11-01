@@ -1,0 +1,340 @@
+<template>
+  <div class="page">
+    <!-- 黑色毛玻璃底：高斯光斑（模糊已烘进 PNG，位置夹在画布内） -->
+    <image class="glow" src="{{glowSrc}}" style="{{sGlow}}" />
+
+    <div class="topbar" style="{{sTopbar}}">
+      <div class="btn" style="{{sBtn}}" onclick="onBack">
+        <image class="ico" src="/common/img/ic_back.png" style="{{sIco}}" />
+      </div>
+      <text class="title" style="{{sTitle}}">设置</text>
+    </div>
+
+    <!-- 不用 scroll 组件：Vela 上它会把子节点堆叠、还会吞掉点击（设置项点不动的元凶）。
+         这一页现在最多 4 行，一屏放得下，直接流式排列 + 垂直居中。 -->
+    <div class="body" style="{{sBody}}">
+      <div class="affbox" style="{{sAffBox}}">
+        <text class="aff-t" style="{{sAffT}}">{{affLine}}</text>
+        <text class="aff-h" style="{{sAffH}}">{{affHint}}</text>
+        <div class="bar" style="{{sBarBg}}">
+          <div class="bar-in" style="{{sBarIn}}"></div>
+        </div>
+      </div>
+
+      <div class="row" style="{{sRow}}" onclick="onAbout">
+        <text class="k" style="{{sK}}">关于{{charName}}</text>
+        <text class="v" style="{{sV}}">查看</text>
+      </div>
+
+      <!-- 开发者功能：只有「开发者版」才有（正式版这三行都不渲染） -->
+      <div class="row dev" if="{{devUi}}" style="{{sRow}}" onclick="onDev">
+        <text class="k" style="{{sK}}">开发者模式</text>
+        <text class="v dev-v" style="{{sV}}">{{devText}}</text>
+      </div>
+      <div class="row dev" if="{{devUi}}" style="{{sRow}}" onclick="onReset">
+        <text class="k" style="{{sK}}">重置好感度</text>
+        <text class="v dev-v" style="{{sV}}">清零</text>
+      </div>
+      <text class="devhint" if="{{devUi}}" style="{{sDevHint}}">开发者模式开启时好感度按满值算，全部剧情都能看。关掉就回到真实进度。</text>
+    </div>
+  </div>
+</template>
+
+<script>
+import router from '@system.router'
+import { TARGET } from '../../config/device-target.js'
+import { loadAff, levelOf, effAff, isDev, setDev, resetAff, DEV_MODE_ENABLED } from '../../config/affinity.js'
+import { GLOW_SRC, glowStyle } from '../../config/theme.js'
+import { CHARACTER } from '../../config/character.js'
+
+const DW = 480
+
+export default {
+  private: {
+    charName: CHARACTER.name,
+    devUi: DEV_MODE_ENABLED,
+    dev: DEV_MODE_ENABLED,
+    devText: '开',
+    affLine: 'Lv.1 初识 · 0',
+    affHint: '',
+    sTopbar: '', sBtn: '', sIco: '', sTitle: '',
+    sGlow: '', glowSrc: GLOW_SRC,
+    sBody: '', sRow: '', sK: '', sV: '',
+    sAffBox: '', sAffT: '', sAffH: '', sBarBg: '', sBarIn: '', sDevHint: '',
+    barW: 300, barH: 10
+  },
+
+  onInit() {
+    this.apply(TARGET.W, TARGET.H)
+    this.loadAffInfo()
+  },
+
+  /* 每次回到这一页都重读一次（从聊天页结算完返回时要看到最新值）。
+     现在 loadAff 给的是进程内那份状态，读完立刻有值，不会读到旧存档。 */
+  onShow() {
+    this.loadAffInfo()
+  },
+
+  loadAffInfo() {
+    const self = this
+    loadAff(function (st) {
+      const dev = isDev(st)
+      const v = effAff(st)
+      const lv = levelOf(v)
+      self.dev = dev
+      self.devText = dev ? '开' : '关'
+      self.affLine = 'Lv.' + lv.lv + ' ' + lv.name + ' · ' + v + (dev ? '（开发者）' : '')
+      self.affHint = dev
+        ? '开发者模式已开：好感度按满值算，所有剧情都能看'
+        : (lv.maxed
+            ? '已满级'
+            : ((lv.hint ? lv.hint + ' · ' : '') + '下一级 ' + lv.nextNeed))
+      const w = Math.round((self.barW || 300) * (dev ? 100 : lv.pct) / 100)
+      self.sBarIn = 'width:' + Math.max(0, w) + 'px;height:100%;border-radius:' +
+        Math.round((self.barH || 10) / 2) + 'px;background-color:' + (dev ? '#7ef0c0' : '#66ccff') +
+        ';position:relative;'
+    })
+  },
+
+  /* 开关开发者模式（真实数值 v 不变，关掉立刻回到真实进度） */
+  onDev() {
+    const self = this
+    setDev(!this.dev, function () {
+      self.loadAffInfo()
+    })
+  },
+
+  /* 重置：好感度清零，保留开发者开关 */
+  onReset() {
+    const self = this
+    resetAff(function () {
+      self.loadAffInfo()
+    })
+  },
+
+  apply(sw, sh) {
+    if (!sw || !sh) return
+    const k = DW / sw
+    const ch = Math.round(sh * k)
+    const btnPhys = Math.min(Math.max(sw * 0.105, 40), 56)
+    const btn = Math.round(btnPhys * k)
+    const ico = Math.round(btn * 0.5)
+    const fsPhys = Math.min(Math.max(sw * 0.042, 13), 20)
+    const fs = Math.round(fsPhys * k)
+    const pad = Math.round(DW * 0.07)
+    const topH = btn + pad * 2
+    const bodyH = ch - topH
+
+    const gap0 = Math.round(fs * 0.4)
+    const rowW = DW - Math.round(DW * 0.18)
+    const boxW = rowW
+    const innerW = rowW - Math.round(fs * 0.9) * 2
+
+    // 好感度面板高度：上下内边距 + 两行文字 + 进度条
+    let boxPadV = Math.round(fs * 0.66)
+    const barH = Math.max(6, Math.round(fs * 0.4))
+    const textH = Math.round(fs * 0.95 * 1.34) + Math.round(fs * 0.25) +
+      Math.round(fs * 0.72 * 1.34) + Math.round(fs * 0.4)
+    let affH = boxPadV * 2 + textH + barH
+
+    // 行数：正式版 1 行（关于），开发者版 3 行（关于 + 开发者模式 + 重置）
+    const nRow = DEV_MODE_ENABLED ? 3 : 1
+    let hintH = DEV_MODE_ENABLED ? Math.round(fs * 0.66 * 1.45) + Math.round(fs * 0.75) : 0
+    const bottomPad = Math.round(fs * 0.8)
+    let gap = gap0
+
+    // 行高按剩余空间算，并夹在 [1.9em, 2.9em] —— 既不挤，也不会在长屏上撑成大方块
+    const totalH = function (rowH) {
+      return affH + hintH + bottomPad + gap * (nRow + 1) + rowH * nRow
+    }
+    let spare = bodyH - affH - hintH - bottomPad - gap * (nRow + 1)
+    let rowH = Math.max(Math.round(fs * 1.9), Math.min(Math.round(fs * 2.9), Math.round(spare / nRow)))
+
+    // 放不下就依次降级：去提示 → 压间距 → 压面板留白。横屏机型（10 Pro 只有 336 高）靠这一步兜住
+    if (totalH(rowH) > bodyH) hintH = 0
+    if (totalH(rowH) > bodyH) gap = Math.max(2, Math.round(fs * 0.2))
+    spare = bodyH - affH - hintH - bottomPad - gap * (nRow + 1)
+    rowH = Math.max(Math.round(fs * 1.5), Math.min(Math.round(fs * 2.9), Math.round(spare / nRow)))
+    if (totalH(rowH) > bodyH) {
+      boxPadV = Math.max(2, Math.round(fs * 0.3))
+      affH = boxPadV * 2 + textH + barH
+      spare = bodyH - affH - hintH - bottomPad - gap * (nRow + 1)
+      rowH = Math.max(Math.round(fs * 1.4), Math.min(Math.round(fs * 2.9), Math.round(spare / nRow)))
+    }
+
+    this.sTopbar = 'height:' + topH + 'px;padding-left:' + pad + 'px;padding-right:' + pad + 'px;'
+    this.sBtn = 'width:' + btn + 'px;height:' + btn + 'px;border-radius:' + Math.round(btn / 2) + 'px;'
+    this.sIco = 'width:' + ico + 'px;height:' + ico + 'px;'
+    this.sTitle = 'font-size:' + Math.round(fs * 1.05) + 'px;margin-left:' + Math.round(fs * 0.6) + 'px;'
+    this.sBody = 'height:' + bodyH + 'px;padding-top:' + Math.round(fs * 0.3) +
+      'px;padding-bottom:' + bottomPad + 'px;'
+    this.sGlow = glowStyle(DW * 0.5, topH + bodyH * 0.2, Math.round(DW * 1.3), DW, ch, 0.30)
+
+    this.sRow = 'width:' + rowW + 'px;height:' + rowH + 'px;margin-bottom:' + gap +
+      'px;padding-left:' + Math.round(fs * 0.9) + 'px;padding-right:' + Math.round(fs * 0.9) +
+      'px;border-radius:' + Math.round(rowH * 0.46) + 'px;'
+    this.sK = 'font-size:' + fs + 'px;'
+    this.sV = 'font-size:' + fs + 'px;'
+
+    // 好感度面板
+    const barW = innerW
+    this.barW = barW
+    this.barH = barH
+    this.sAffBox = 'width:' + boxW + 'px;padding-top:' + boxPadV + 'px;padding-bottom:' + boxPadV +
+      'px;padding-left:' + Math.round(fs * 0.9) + 'px;padding-right:' + Math.round(fs * 0.9) +
+      'px;border-radius:' + Math.round(fs * 1.15) + 'px;margin-bottom:' + gap + 'px;'
+    this.sAffT = 'font-size:' + Math.round(fs * 0.95) + 'px;line-height:' + Math.round(fs * 0.95 * 1.34) + 'px;'
+    this.sAffH = 'font-size:' + Math.round(fs * 0.72) + 'px;line-height:' + Math.round(fs * 0.72 * 1.34) +
+      'px;margin-top:' + Math.round(fs * 0.25) + 'px;margin-bottom:' + Math.round(fs * 0.4) + 'px;'
+    this.sBarBg = 'width:' + barW + 'px;height:' + barH + 'px;border-radius:' +
+      Math.round(barH / 2) + 'px;'
+    this.sBarIn = 'width:0px;height:100%;border-radius:' + Math.round(barH / 2) +
+      'px;background-color:#66ccff;position:relative;'
+
+    // 开发者提示文字
+    this.sDevHint = 'width:' + rowW + 'px;font-size:' + Math.round(fs * 0.66) +
+      'px;line-height:' + Math.round(fs * 0.66 * 1.45) + 'px;margin-top:' + Math.round(fs * 0.15) +
+      'px;margin-bottom:' + Math.round(fs * 0.3) + 'px;text-align:center;'
+  },
+
+  onAbout() {
+    try {
+      router.push({ uri: '/pages/about' })
+    } catch (e) {}
+  },
+
+  onBack() {
+    try {
+      router.back()
+    } catch (e) {}
+  }
+}
+</script>
+
+<style>
+  .page {
+    width: 100%;
+    height: 100%;
+    position: relative;
+    flex-direction: column;
+    align-items: center;
+    background-color: #000000;
+  }
+
+  /* 高斯光斑：模糊已烘进 PNG，这里只负责摆放与调暗 */
+  .glow {
+    position: absolute;
+    object-fit: contain;
+  }
+
+  .topbar {
+    position: relative;
+    flex-direction: row;
+    justify-content: center;
+    align-items: center;
+    flex-shrink: 0;
+  }
+
+  .btn {
+    position: relative;
+    justify-content: center;
+    align-items: center;
+    background-color: rgba(255, 255, 255, 0.07);
+    border-width: 1px;
+    border-color: rgba(255, 255, 255, 0.13);
+  }
+
+  .ico {
+    position: relative;
+    object-fit: contain;
+  }
+
+  .title {
+    position: relative;
+    color: #f3f3f6;
+    font-weight: bold;
+  }
+
+  .body {
+    position: relative;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  /* 黑色毛玻璃行：半透明白 + 1px 亮边，大圆角（接近胶囊） */
+  .row {
+    position: relative;
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    background-color: rgba(255, 255, 255, 0.075);
+    border-width: 1px;
+    border-color: rgba(255, 255, 255, 0.13);
+  }
+
+  .k {
+    position: relative;
+    color: #c9c9d1;
+  }
+
+  .v {
+    position: relative;
+    color: #f3f3f6;
+    font-weight: bold;
+  }
+
+  .affbox {
+    position: relative;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    background-color: rgba(255, 255, 255, 0.06);
+    border-width: 1px;
+    border-color: rgba(255, 255, 255, 0.12);
+  }
+
+  .aff-t {
+    position: relative;
+    color: #f3f3f6;
+    font-weight: bold;
+    lines: 1;
+  }
+
+  .aff-h {
+    position: relative;
+    color: #8a8a93;
+    lines: 2;
+  }
+
+  .bar {
+    position: relative;
+    background-color: rgba(255, 255, 255, 0.10);
+    border-width: 1px;
+    border-color: rgba(255, 255, 255, 0.08);
+  }
+
+  /* 唯一保留的彩色：强调色，只用来标识好感度进度 */
+  .bar-in {
+    position: relative;
+    background-color: #66ccff;
+  }
+
+  /* ---- 开发者功能：同样走黑色玻璃，只把数值染成强调色 ---- */
+  .dev {
+    position: relative;
+    background-color: rgba(255, 255, 255, 0.10);
+    border-color: rgba(255, 255, 255, 0.18);
+  }
+
+  .dev-v {
+    position: relative;
+    color: #66ccff;
+  }
+
+  .devhint {
+    position: relative;
+    color: #6a6a73;
+  }
+</style>

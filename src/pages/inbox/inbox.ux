@@ -1,0 +1,459 @@
+<template>
+  <div class="page" style="{{sPage}}">
+    <!-- 黑色毛玻璃底：高斯光斑（模糊已烘进 PNG，位置夹在画布内） -->
+    <image class="glow" src="{{glowSrc}}" style="{{sGlow}}" />
+
+    <div class="topbar" style="{{sTopbar}}">
+      <div class="btn" style="{{sBtn}}" onclick="onBack">
+        <image class="ico" src="/common/img/ic_back.png" style="{{sIco}}" />
+      </div>
+      <text class="title" style="{{sTitle}}">消息</text>
+      <div class="rightcol" style="{{sRight}}">
+        <text class="date" style="{{sDate}}">{{dateText}}</text>
+        <text class="affline {{affCls}}" style="{{sAff}}">{{affText}}</text>
+      </div>
+    </div>
+
+    <!-- 固定行高列表（不用 scroll 组件，避免子元素堆叠）。
+         v2.9 起只显示标题；v2.9.2 起没解锁的对话直接不显示（正式版） -->
+    <div class="body" style="{{sBody}}">
+      <div class="row {{$item.rowCls}}" style="{{sRow}}" for="{{list}}" key="{{$item.id}}"
+        onclick="onOpen($idx)">
+        <div class="ava" style="{{sAva}}">
+          <image class="ava-img" src="{{$item.icon}}" style="{{sAvaImg}}" />
+        </div>
+        <div class="mid" style="{{sMid}}">
+          <text class="name {{$item.nameCls}}" style="{{sName}}">{{$item.title}}</text>
+        </div>
+        <div class="dot" if="{{$item.unread}}" style="{{sDot}}"></div>
+      </div>
+
+      <!-- 没解锁的对话不置灰占位，直接不显示 → 列表空 = 还没收到过消息 -->
+      <div class="empty" if="{{empty}}" style="{{sEmpty}}">
+        <text class="empty-t" style="{{sEmptyT}}">{{emptyText}}</text>
+        <text class="empty-s" style="{{sEmptyS}}">{{emptySub}}</text>
+      </div>
+    </div>
+
+    <!-- 分页（超过一屏时才出现） -->
+    <div class="pager" if="{{pages > 1}}" style="{{sPager}}">
+      <div class="pg" style="{{sPg}}" onclick="onPrev">
+        <text class="pg-t" style="{{sPgT}}">‹</text>
+      </div>
+      <text class="pg-n" style="{{sPgN}}">{{pageText}}</text>
+      <div class="pg" style="{{sPg}}" onclick="onNext">
+        <text class="pg-t" style="{{sPgT}}">›</text>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script>
+import router from '@system.router'
+import prompt from '@system.prompt'
+import { TARGET } from '../../config/device-target.js'
+import { loadState, buildList, OPEN_KEY } from '../../config/inbox.js'
+import { setString } from '../../config/store.js'
+import { loadAff, levelOf, effAff, isDev } from '../../config/affinity.js'
+import { dateLabel } from '../../config/dates.js'
+import { MAX_TITLE_LEN } from '../../config/story-meta.js'
+import { CHARACTER } from '../../config/character.js'
+import { GLOW_SRC, glowStyle } from '../../config/theme.js'
+
+const DW = 480
+
+export default {
+  private: {
+    list: [],            // 当前页的行
+    all: [],             // 全部已触发对话
+    page: 0,
+    pages: 0,
+    perPage: 6,
+    pageText: '',
+    empty: true,
+    emptyText: '还没有新消息',
+    emptySub: '多陪陪' + CHARACTER.name + '，或者换个时间段再来看看～',
+    dateText: '',
+    affText: 'Lv.1 0',
+    affCls: 'aff-lo',
+    sPage: '', sGlow: '', glowSrc: GLOW_SRC,
+    sTopbar: '', sBtn: '', sIco: '', sTitle: '', sDate: '',
+    sRight: '', sAff: '',
+    sBody: '', sRow: '', sAva: '', sAvaImg: '', sMid: '', sName: '',
+    sDot: '', sPager: '', sPg: '', sPgT: '', sPgN: '',
+    sEmpty: '', sEmptyT: '', sEmptyS: '',
+    rowH: 64, gapH: 10
+  },
+
+  onInit() {
+    this.dateText = dateLabel(new Date())
+    this.apply(TARGET.W, TARGET.H)
+  },
+
+  onShow() {
+    this.dateText = dateLabel(new Date())
+    this.refresh()
+  },
+
+  apply(sw, sh) {
+    if (!sw || !sh) return
+    const k = DW / sw
+    const ch = Math.round(sh * k)
+    const btnPhys = Math.min(Math.max(sw * 0.105, 38), 56)
+    const btn = Math.round(btnPhys * k)
+    const ico = Math.round(btn * 0.5)
+    const fsPhys = Math.min(Math.max(sw * 0.042, 13), 20)
+    const fs = Math.round(fsPhys * k)
+    const topH = btn + Math.round(DW * 0.06)
+    const bodyH = ch - topH
+    const pgH = Math.round(fs * 2.6)
+
+    /* 只显示标题：行高 = 头像高 + 上下留白，不再算简介行。
+       （以前按「标题 1 行 + 简介 2 行」算，差几个 px 底部就被裁 → 就是「显示不全」） */
+    const padV0 = Math.round(fs * 0.58)
+    const ava0 = Math.min(Math.round(fs * 2.2), Math.round(DW * 0.22))
+    const gapH = Math.max(6, Math.round(fs * 0.4))
+    const availH = bodyH - pgH - gapH
+    let rowH = Math.max(ava0 + padV0 * 2, Math.round(fs * 2.4))
+    let perPage = Math.floor(availH / (rowH + gapH))
+    // 横屏机型（手环 10 Pro 只有 336 高）放不下 3 行 → 把行高整体压薄，别一页只显示 2 条
+    if (perPage < 3) {
+      rowH = Math.max(Math.round(fs * 1.9), Math.floor(availH / 3) - gapH)
+      perPage = Math.floor(availH / (rowH + gapH))
+    }
+
+    const padV = Math.min(padV0, Math.max(2, Math.round(rowH * 0.24)))
+    const ava = Math.min(ava0, Math.max(1, rowH - padV * 2))
+    const rowW = DW - Math.round(DW * 0.16)
+    const rowPadH = Math.min(Math.round(rowH * 0.2), Math.round(fs * 0.8))
+    const dotW = Math.round(fs * 0.8)
+    const midGap = Math.round(rowH * 0.16)
+    // 中间栏按「行内容宽」算，不能按 DW 算 —— 会溢出，标题末尾被裁
+    const midW = Math.max(40, rowW - rowPadH * 2 - ava - midGap - dotW)
+
+    /* 标题只有一行（lines:1），窄屏上字太大就会被裁 ——
+       按「最长标题要能放下」回收字号，下限 0.82×fs，再小就不好读了 */
+    const fitFs = Math.floor(midW / (MAX_TITLE_LEN * 1.04))
+    const nameFs = Math.max(Math.round(fs * 0.82), Math.min(Math.round(fs * 1.06), fitFs))
+    const nameLH = Math.round(nameFs * 1.34)
+    // 兜底：压薄行高以后文字可能反而放不下，再撑回来
+    if (rowH < nameLH + padV * 2) {
+      rowH = nameLH + padV * 2
+      perPage = Math.floor(availH / (rowH + gapH))
+    }
+    perPage = Math.max(1, Math.min(perPage, 10))
+
+    this.fs = fs
+    this.rowH = rowH
+    this.gapH = gapH
+    this.perPage = perPage
+
+    this.sPage = 'width:' + DW + 'px;height:' + ch + 'px;position:absolute;left:0;top:0;overflow:hidden;'
+    this.sGlow = glowStyle(DW * 0.5, topH + bodyH * 0.24, Math.round(DW * 1.4), DW, ch, 0.34)
+    this.sTopbar = 'height:' + topH + 'px;padding-left:' + Math.round(DW * 0.06) +
+      'px;padding-right:' + Math.round(DW * 0.06) + 'px;'
+    this.sBtn = 'width:' + btn + 'px;height:' + btn + 'px;border-radius:' + Math.round(btn / 2) + 'px;'
+    this.sIco = 'width:' + ico + 'px;height:' + ico + 'px;'
+    this.sTitle = 'font-size:' + Math.round(fs * 1.15) + 'px;margin-left:' + Math.round(fs * 0.7) + 'px;'
+    this.sDate = 'font-size:' + Math.round(fs * 0.74) + 'px;'
+    this.sAff = 'font-size:' + Math.round(fs * 0.72) + 'px;margin-top:2px;'
+    this.sRight = 'height:' + topH + 'px;'
+
+    this.sBody = 'height:' + bodyH + 'px;width:' + DW + 'px;'
+
+    this.sAva = 'width:' + ava + 'px;height:' + ava + 'px;border-radius:' + Math.round(ava * 0.36) + 'px;'
+    this.sAvaImg = 'width:' + Math.round(ava * 0.92) + 'px;height:' + Math.round(ava * 0.92) +
+      'px;border-radius:' + Math.round(ava * 0.3) + 'px;'
+    this.sMid = 'width:' + midW + 'px;margin-left:' + midGap + 'px;'
+    // 行样式对所有行都一样（高度/间距固定）→ 用统一变量，不逐行算，避免样式过期错位
+    this.sRow = 'height:' + rowH + 'px;width:' + rowW +
+      'px;margin-bottom:' + gapH + 'px;padding-left:' + rowPadH +
+      'px;padding-right:' + rowPadH +
+      'px;border-radius:' + Math.round(rowH * 0.44) + 'px;'
+    this.sName = 'font-size:' + nameFs + 'px;line-height:' + nameLH + 'px;'
+    const dot = Math.round(fs * 0.62)
+    this.sDot = 'width:' + dot + 'px;height:' + dot + 'px;border-radius:' + Math.round(dot / 2) +
+      'px;right:' + rowPadH + 'px;top:' + Math.round(rowH * 0.24) + 'px;'
+
+    this.sPager = 'height:' + pgH + 'px;width:' + DW + 'px;bottom:' + Math.round(fs * 0.5) + 'px;'
+    const pg = Math.round(fs * 2.1)
+    this.sPg = 'width:' + pg + 'px;height:' + pg + 'px;border-radius:' + Math.round(pg / 2) + 'px;'
+    this.sPgT = 'font-size:' + Math.round(fs * 1.1) + 'px;'
+    this.sPgN = 'font-size:' + Math.round(fs * 0.8) + 'px;margin-left:' + Math.round(fs * 0.8) +
+      'px;margin-right:' + Math.round(fs * 0.8) + 'px;'
+
+    this.sEmpty = 'height:' + (bodyH - pgH) + 'px;width:' + DW + 'px;'
+    this.sEmptyT = 'font-size:' + Math.round(fs * 0.95) + 'px;'
+    this.sEmptyS = 'font-size:' + Math.round(fs * 0.78) + 'px;margin-top:' + Math.round(fs * 0.5) + 'px;'
+
+    this.refresh()
+  },
+
+  refresh() {
+    const self = this
+    loadAff(function (aff) {
+      const v = effAff(aff)
+      const lv = levelOf(v)
+      self.affText = 'Lv.' + lv.lv + ' ' + lv.name + ' · ' + v + (isDev(aff) ? ' (开发)' : '')
+      self.affCls = lv.lv >= 5 ? 'aff-hi' : (lv.lv >= 3 ? 'aff-mid' : 'aff-lo')
+      loadState(function (st) {
+        self.all = buildList(st, aff)
+        self.pages = Math.max(1, Math.ceil(self.all.length / self.perPage))
+        if (self.page >= self.pages) self.page = Math.max(0, self.pages - 1)
+        self.renderPage()
+      })
+    })
+  },
+
+  renderPage() {
+    const from = this.page * this.perPage
+    const src = this.all.slice(from, from + this.perPage)
+    const out = []
+    for (let i = 0; i < src.length; i++) {
+      const it = src[i]
+      const lock = (it.affLocked || it.locked) ? 1 : 0
+      out.push({
+        id: it.id,
+        title: it.title,
+        icon: it.icon,
+        unread: it.unread,
+        minAff: it.minAff,
+        affLocked: it.affLocked,
+        rowCls: lock ? 'row-lock' : 'row-on',
+        nameCls: lock ? 'name-lock' : 'name-on'
+      })
+    }
+    this.list = out
+    this.empty = (out.length === 0)
+    this.pageText = (this.page + 1) + ' / ' + this.pages
+  },
+
+  onPrev() {
+    if (this.page <= 0) return
+    this.page--
+    this.renderPage()
+  },
+
+  onNext() {
+    if (this.page >= this.pages - 1) return
+    this.page++
+    this.renderPage()
+  },
+
+  onOpen(idx) {
+    const item = this.list[idx]
+    if (!item) return
+    // 兜底：正式版已经把没解锁的过滤掉了，这里只有开发者版看全量时才会命中
+    if (item.affLocked) {
+      try {
+        prompt.showToast({
+          message: '好感度 ' + item.minAff + ' 解锁哦～再陪我久一点嘛',
+          duration: 2000
+        })
+      } catch (e) {}
+      return
+    }
+    const id = item.id
+    const go = function () {
+      try {
+        router.push({ uri: '/pages/chat', params: { sid: id } })
+      } catch (e) {}
+    }
+    // 等 storage 真正写完再跳，否则 chat 页可能读到上一条的 id（这就是「只打得开一个对话」）
+    setString(OPEN_KEY, id, go)
+  },
+
+  onBack() {
+    try {
+      router.back()
+    } catch (e) {}
+  }
+}
+</script>
+
+<style>
+  .page {
+    position: relative;
+    flex-direction: column;
+    align-items: center;
+    background-color: #000000;
+  }
+
+  /* 高斯光斑：模糊已烘进 PNG，这里只负责摆放与调暗 */
+  .glow {
+    position: absolute;
+    object-fit: contain;
+  }
+
+  .topbar {
+    position: relative;
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    flex-shrink: 0;
+  }
+
+  .btn {
+    position: relative;
+    justify-content: center;
+    align-items: center;
+    background-color: rgba(255, 255, 255, 0.07);
+    border-width: 1px;
+    border-color: rgba(255, 255, 255, 0.13);
+  }
+
+  .ico {
+    position: relative;
+    object-fit: contain;
+  }
+
+  .title {
+    position: relative;
+    color: #f3f3f6;
+    font-weight: bold;
+  }
+
+  .date {
+    position: relative;
+    color: #7d7d86;
+  }
+
+  .rightcol {
+    position: relative;
+    flex-direction: column;
+    align-items: flex-end;
+    justify-content: center;
+  }
+
+  .affline {
+    position: relative;
+    color: #9a9aa3;
+  }
+
+  .aff-lo {
+    position: relative;
+    color: #9a9aa3;
+  }
+
+  .aff-mid {
+    position: relative;
+    color: #c2c2ca;
+  }
+
+  .aff-hi {
+    position: relative;
+    color: #66ccff;
+  }
+
+  .body {
+    position: relative;
+    flex-direction: column;
+    align-items: center;
+    flex-shrink: 0;
+  }
+
+  /* 黑色毛玻璃行：半透明白 + 1px 亮边，大圆角 */
+  .row {
+    position: relative;
+    flex-direction: row;
+    align-items: center;
+    flex-shrink: 0;
+    border-width: 1px;
+  }
+
+  /* 未解锁的剧情：整行压暗 */
+  .row-lock {
+    position: relative;
+    background-color: rgba(255, 255, 255, 0.03);
+    border-color: rgba(255, 255, 255, 0.06);
+  }
+
+  .row-on {
+    position: relative;
+    background-color: rgba(255, 255, 255, 0.075);
+    border-color: rgba(255, 255, 255, 0.13);
+  }
+
+  .name-lock {
+    position: relative;
+    color: #5b5b64;
+  }
+
+  .name-on {
+    position: relative;
+    color: #f3f3f6;
+  }
+
+  .ava {
+    position: relative;
+    justify-content: center;
+    align-items: center;
+    flex-shrink: 0;
+    background-color: rgba(255, 255, 255, 0.08);
+  }
+
+  .ava-img {
+    position: relative;
+    object-fit: contain;
+  }
+
+  .mid {
+    position: relative;
+    flex-direction: column;
+    justify-content: center;
+  }
+
+  .name {
+    position: relative;
+    font-weight: bold;
+    lines: 1;
+  }
+
+  .dot {
+    position: absolute;
+    background-color: #ff4d4f;
+  }
+
+  .empty {
+    position: relative;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .empty-t {
+    position: relative;
+    color: #9a9aa3;
+  }
+
+  .empty-s {
+    position: relative;
+    color: #5b5b64;
+  }
+
+  .pager {
+    position: absolute;
+    flex-direction: row;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .pg {
+    position: relative;
+    justify-content: center;
+    align-items: center;
+    background-color: rgba(255, 255, 255, 0.07);
+    border-width: 1px;
+    border-color: rgba(255, 255, 255, 0.13);
+  }
+
+  .pg-t {
+    position: relative;
+    color: #f3f3f6;
+  }
+
+  .pg-n {
+    position: relative;
+    color: #7d7d86;
+  }
+</style>

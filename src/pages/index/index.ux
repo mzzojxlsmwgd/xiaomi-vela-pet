@@ -1,0 +1,728 @@
+<template>
+  <div class="page" style="{{sPage}}" onswipe="onSwipe">
+    <!-- 黑色毛玻璃底：两层高斯光斑（模糊已烘进 PNG，运行时零开销；位置全部夹在画布内） -->
+    <image class="glow" src="{{glowSrc}}" style="{{sGlow1}}" />
+    <image class="glow" src="{{glowSrc}}" style="{{sGlow2}}" />
+
+    <!-- 顶部：信息 + 时钟 + 好感度（整组水平居中，避开圆角）；右滑退出 -->
+    <div class="topbar" style="{{sTopbar}}">
+      <div class="btn" style="{{sBtn}}" onclick="onInbox" onlongpress="onExit">
+        <image class="ico" src="/common/img/ic_msg.png" style="{{sIco}}" />
+        <div class="dot" if="{{hasUnread}}" style="{{sDot}}"></div>
+      </div>
+      <text class="clock" style="{{sClock}}">{{clock}}</text>
+      <div class="affchip {{affCls}}" style="{{sAff}}">
+        <text class="aff-t" style="{{sAffT}}">{{affText}}</text>
+      </div>
+      <text class="afftip" style="{{sAffTip}}">{{affTip}}</text>
+    </div>
+
+    <!-- 中间：整块可点区域（表情 + 文字都在里面，点哪都说话） -->
+    <div class="playarea" style="{{sPlay}}" onclick="onTap">
+      <div class="stage" style="{{sStage}}">
+        <div class="card" style="{{sHalo}}">
+          <image class="avatar" src="{{emojiSrc}}" style="{{sAvatar}}" />
+        </div>
+      </div>
+      <div class="bubble" style="{{sBubble}}">
+        <text class="bubble-text" style="{{sText}}">{{dispText}}</text>
+      </div>
+    </div>
+
+    <!-- 底部：设置（居中） -->
+    <div class="bottombar" style="{{sBottombar}}">
+      <div class="btn" style="{{sBtn}}" onclick="onSettings">
+        <image class="ico" src="/common/img/ic_set.png" style="{{sIco}}" />
+      </div>
+    </div>
+  </div>
+</template>
+
+<script>
+import router from '@system.router'
+import app from '@system.app'
+import device from '@system.device'
+import { TARGET } from '../../config/device-target.js'
+import { WELCOME, LOGIN_LINES, LEVEL_UP_LINES, TIME_LINES, MEAL_LINES, HEART_LINES,
+  CHEER_LINES, SONG_LINES, CHAT_LINES, EXPR_LINES, BOND_LINES, DATE_LINES } from '../../config/dialogue.js'
+import { maybeTrigger, unreadCount } from '../../config/inbox.js'
+import { eventsOf } from '../../config/dates.js'
+import { EMOJI, EMOJI_HI, framesOf, emojiPath } from '../../config/emoji.js'
+import { exprFor } from '../../config/mood.js'
+import { GLOW_SRC, glowStyle } from '../../config/theme.js'
+import { CHARACTER } from '../../config/character.js'
+import { dailyLogin, touchSlot, levelOf, effAff, isDev, loadAff } from '../../config/affinity.js'
+
+const DW = 480               // 与 manifest.config.designWidth 保持一致
+/* 表情清单统一在 config/emoji.js（新 20 套 10 帧 / 旧 10 套 8 帧） */
+const EXPR = EMOJI
+const EXPR_HI = EMOJI_HI
+const TICK = 60              // 主循环间隔 ms
+const FRAME_TICKS = 2        // 每 2 个 tick 换一帧表情（≈120ms，10 帧一轮 1.2 秒，接近源 GIF 速度）
+
+export default {
+  private: {
+    clock: '',
+    fullText: CHARACTER.tapHint,
+    dispText: CHARACTER.tapHint,
+    emojiSrc: emojiPath('idle', 0),
+
+    // 布局（applySizes 会按机型分辨率重算）
+    cw: DW,
+    ch: 540,
+    fs: 20,
+    bubbleW: 384,
+    bubbleH: 52,
+    fitN: 12,
+    scrollSrc: '',
+    marquee: true,
+    marqPos: 0,
+    marqTick: 0,
+    sPage: '', sGlow1: '', sGlow2: '', glowSrc: GLOW_SRC,
+    sTopbar: '', sBtn: '', sIco: '', sClock: '',
+    sPlay: '', sStage: '', sHalo: '', sAvatar: '',
+    sBubble: '', sText: '', sBottombar: '', sDot: '',
+    sAff: '', sAffT: '', sAffTip: '',
+    hasUnread: false,
+
+    // 好感度
+    aff: 0,
+    affState: null,
+    level: null,
+    dev: false,
+    affText: 'Lv.1 0',
+    affCls: 'aff-lo',
+    affTip: '',
+    affTipTicks: 0,
+
+    // 运行时状态
+    nick: '你',
+    animOn: true,
+    speed: 1,
+    idleOn: true,
+    expr: 'idle',
+    frame: 0,
+    tick: 0,
+    lastAct: 0,
+    welcomed: false,
+    timer: null
+  },
+
+  onInit() {
+    const self = this
+    this.lastAct = new Date().getTime()
+    this.clock = this.fmtClock()
+    this.applySizes(TARGET.W, TARGET.H)           // 先用写死分辨率兜底
+    // 再用设备真实屏幕精修：避免写死分辨率与真机不符导致页面过大 / 可滑动
+    try {
+      device.getInfo({
+        success(ret) {
+          if (ret && ret.screenWidth && ret.screenHeight) {
+            self.applySizes(ret.screenWidth, ret.screenHeight)
+          }
+        },
+        fail() {}
+      })
+    } catch (e) {}
+    // 好感度：结算每日登录（加好感 + 说一句问候）
+    this.bootAff()
+  },
+
+  onReady() {
+    this.startLoop()
+  },
+
+  onShow() {
+    this.clock = this.fmtClock()
+    this.refreshAff()                              // 从聊天页结算完返回，数字要立刻对上
+    this.refreshInbox()
+    if (!this.timer) this.startLoop()
+  },
+
+  onHide() {
+    this.stopLoop()
+  },
+
+  onDestroy() {
+    this.stopLoop()
+  },
+
+  /* ---------------- 布局 ---------------- */
+
+  applySizes(sw, sh) {
+    if (!sw || !sh) return
+    const k = DW / sw                       // 1 物理 px 对应多少 CSS px
+    const cw = DW
+    const ch = Math.round(sh * k)
+    const landscape = sh < sw               // 横屏机型（如手环 10 Pro）
+
+    const btnPhys = Math.min(Math.max(sw * 0.1, 40), 54)
+    const btn = Math.round(btnPhys * k)
+    const ico = Math.round(btn * 0.5)
+    const fsPhys = Math.min(Math.max(sw * 0.042, 13), 18)
+    const fs = Math.round(fsPhys * k)
+
+    const pad = Math.round(ch * 0.03)
+    const topH = btn + pad * 2
+    const botH = btn + pad * 2
+    const gap = Math.round(fs * 0.5)
+    const bubbleH = Math.round(Math.min(fs * 2.4, ch * 0.15))
+    const stageH = Math.max(70, ch - topH - botH - bubbleH - gap)
+    // 表情包不超过舞台短边的 92%，也不超过画面宽度的 50%，避免“太大”
+    const emRatio = sw < 280 ? 0.42 : 0.5
+    const emoji = Math.round(Math.min(cw * emRatio, stageH * 0.85))
+    const card = Math.round(emoji * 1.08)        // 光晕底框，比表情略大
+    const bubbleW = cw - Math.round(cw * 0.16)
+
+    this.cw = cw
+    this.ch = ch
+    this.fs = fs
+    this.bubbleW = bubbleW
+    this.bubbleH = bubbleH
+
+    // 高斯光斑：glowStyle 内部会把光斑整体夹进画布，
+    // 越界会撑出可滑动的空白（此前 Watch 6 上下可滑动就是装饰层溢出）
+    this.sGlow1 = glowStyle(cw * 0.30, ch * 0.24, Math.round(cw * 1.5), cw, ch, 0.42)
+    this.sGlow2 = glowStyle(cw * 0.76, ch * 0.82, Math.round(cw * 1.1), cw, ch, 0.26)
+
+    // 页面尺寸用 px 写死（不依赖 100%），从根上锁死画布，杜绝可滑动
+    this.sPage = 'width:' + cw + 'px;height:' + ch + 'px;position:absolute;left:0;top:0;overflow:hidden;'
+
+    this.sTopbar = 'height:' + topH + 'px;padding-left:' + pad + 'px;padding-right:' + pad + 'px;'
+    this.sBottombar = 'height:' + botH + 'px;'
+    this.sBtn = 'width:' + btn + 'px;height:' + btn + 'px;border-radius:' + Math.round(btn / 2) + 'px;'
+    this.sDot = 'width:' + Math.round(btn * 0.26) + 'px;height:' + Math.round(btn * 0.26) +
+      'px;border-radius:' + Math.round(btn * 0.13) + 'px;'
+    this.sIco = 'width:' + ico + 'px;height:' + ico + 'px;'
+    this.sClock = 'font-size:' + Math.round(fs * 1.15) + 'px;margin-left:' + Math.round(fs * 0.7) + 'px;'
+    const affH = Math.round(fs * 1.5)
+    this.sAff = 'height:' + affH + 'px;border-radius:' + Math.round(affH / 2) + 'px;margin-left:' +
+      Math.round(fs * 0.5) + 'px;padding-left:' + Math.round(fs * 0.45) +
+      'px;padding-right:' + Math.round(fs * 0.45) + 'px;'
+    this.sAffT = 'font-size:' + Math.round(fs * 0.72) + 'px;'
+    this.sAffTip = 'font-size:' + Math.round(fs * 0.72) + 'px;margin-left:' + Math.round(fs * 0.3) + 'px;'
+    this.sPlay = 'width:100%;'
+    this.sStage = 'width:100%;height:' + stageH + 'px;'
+    // 光晕与表情改为流式居中（不再用绝对定位 left/top），避免 stage 0 宽把表情挤出屏外
+    // 大圆角：卡片 0.32、里面那张图 0.22（旧 10 套表情自带浅色方底，靠它把方角磨圆）
+    this.sHalo = 'width:' + card + 'px;height:' + card + 'px;border-radius:' + Math.round(card * 0.32) + 'px;'
+    this.sAvatar = 'width:' + emoji + 'px;height:' + emoji + 'px;border-radius:' +
+      Math.round(emoji * 0.22) + 'px;'
+    this.sBubble = 'height:' + bubbleH + 'px;width:' + bubbleW + 'px;border-radius:' +
+      Math.round(bubbleH * 0.5) + 'px;margin-top:' + gap + 'px;'
+    this.sText = 'font-size:' + fs + 'px;line-height:' + bubbleH + 'px;height:' + bubbleH + 'px;'
+
+    this.relayoutText()
+  },
+
+  /* 排版文字：全部台词统一走「逐字窗口跑马灯」滚动，不再区分长短 */
+  relayoutText() {
+    const fs = this.fs || 20
+    const bw = this.bubbleW || 384
+    const full = this.fullText || ''
+    let w = 0
+    let fit = 0
+    for (let i = 0; i < full.length; i++) {
+      const c = full.charCodeAt(i)
+      // 中文按 1 个 em 宽（以前按 0.95 算会多塞一个字，导致末尾被裁掉，看起来只显示 3/4）
+      // 余量给到 1.2 个字号，吸收字体渲染比字号略宽的情况
+      w += (c < 256 ? 0.55 : 1) * fs
+      if (w <= bw - fs * 1.2) fit++
+      else break
+    }
+    this.fitN = Math.max(1, fit)
+    this.marquee = true
+    this.marqPos = 0
+    this.marqTick = 0
+    this.sText = 'font-size:' + fs + 'px;line-height:' + this.bubbleH +
+      'px;height:' + this.bubbleH + 'px;width:' + bw + 'px;text-align:left;'
+
+    // 短句：把台词重复拼成一条长字幕（句间留全角空格），
+    // 这样滚动时永远有内容，不会出现大段空白（以前前后补空格会空掉一屏）
+    let start = 0
+    if (full.length <= this.fitN) {
+      let src = full
+      let guard = 0
+      while (src.length < this.fitN + full.length + 2 && guard < 40) {
+        src += '\u3000\u3000' + full
+        guard++
+      }
+      this.scrollSrc = src
+    } else {
+      this.scrollSrc = full
+    }
+    this.marqPos = start
+    this.dispText = this.windowAt(start)
+  },
+
+  /* 取滚动窗口：从 pos 开始取 fitN 个字，越界自动绕回 */
+  windowAt(pos) {
+    const src = this.scrollSrc || ''
+    const n = this.fitN || 1
+    if (!src.length) return ''
+    let s = ''
+    for (let i = 0; i < n; i++) {
+      s += src[(pos + i) % src.length]
+    }
+    return s
+  },
+
+  /* ---------------- 循环 ---------------- */
+
+  startLoop() {
+    const self = this
+    this.stopLoop()
+    this.timer = setInterval(function () {
+      self.tickOnce()
+    }, TICK)
+  },
+
+  stopLoop() {
+    if (this.timer) {
+      clearInterval(this.timer)
+      this.timer = null
+    }
+  },
+
+  tickOnce() {
+    this.tick++
+
+    // 时钟：分钟变了才更新
+    const c = this.fmtClock()
+    if (c !== this.clock) this.clock = c
+
+    // 表情逐帧播放
+    if (this.animOn && this.tick % FRAME_TICKS === 0) {
+      this.frame = (this.frame + 1) % framesOf(this.expr)
+      this.emojiSrc = emojiPath(this.expr, this.frame)
+    }
+
+    // 全部台词逐字滚动（不依赖 scroll 组件）；速度跟随设置项
+    if (this.marquee) {
+      const step = this.speed >= 1.5 ? 1 : (this.speed <= 0.7 ? 3 : 2)
+      this.marqTick++
+      if (this.marqTick % step === 0) {
+        this.marqPos++
+        if (this.marqPos >= this.scrollSrc.length) this.marqPos = 0
+        this.dispText = this.windowAt(this.marqPos)
+      }
+    }
+
+    // 好感度浮字：显示 2 秒后消失
+    if (this.affTip) {
+      this.affTipTicks++
+      if (this.affTipTicks > 34) this.affTip = ''
+    }
+
+    // 长时间没人理，就自己说句话
+    if (this.idleOn) {
+      const now = new Date().getTime()
+      if (now - this.lastAct > 45000) {
+        this.lastAct = now
+        this.say('chat')
+      }
+    }
+  },
+
+  /* ---------------- 交互 ---------------- */
+
+  onTap() {
+    this.lastAct = new Date().getTime()
+    if (!this.welcomed) {
+      this.welcomed = true
+      this.setExpr('idle')
+      this.sayText(this.pick(WELCOME))
+      return
+    }
+
+    const d = new Date()
+    const h = d.getHours() + d.getMinutes() / 60
+
+    // 每个时段第一次点她 → 好感度 +1（每天最多 4 分）
+    this.claimSlot(this.timeSlot())
+
+    // 日期台词：概率刻意压得很低（以前 55%，几乎每次点都在说节日/周末）
+    if (Math.random() < 0.14) {
+      const ev = eventsOf(d)
+      for (let i = 0; i < ev.length; i++) {
+        const pool = DATE_LINES[ev[i]]
+        if (pool && pool.length) return this.sayMood(pool, ['happy'])
+      }
+    }
+
+    // 饭点（也降了，别老是催吃饭）
+    if (Math.random() < 0.22) {
+      if (h > 6.5 && h < 8.5) return this.say('breakfast')
+      if (h > 10.5 && h < 12.5) return this.say('lunch')
+      if (h > 16.5 && h < 18.5) return this.say('dinner')
+    }
+
+    const r = Math.random()
+    if (r < 0.26) return this.say('expr')
+    if (r < 0.46 && this.levelLv() >= 2) return this.say('bond')
+    if (r < 0.60) return this.say('heart')
+    if (r < 0.72) return this.say('song')
+    if (r < 0.84) return this.say('chat')
+    return this.say('time')
+  },
+
+  say(kind) {
+    if (kind === 'expr') {
+      const e = this.pickExpr()
+      this.setExpr(e)
+      const pool = EXPR_LINES[e] || EXPR_LINES.idle
+      return this.sayText(this.pick(pool))
+    }
+    if (kind === 'bond') {
+      const lv = this.levelLv()
+      const pool = BOND_LINES[lv] || BOND_LINES[1]
+      this.setExpr(lv >= 4 ? 'love' : (lv >= 3 ? 'shy' : 'happy'))
+      return this.sayText(this.pick(pool))
+    }
+    if (kind === 'heart') {
+      return this.sayMood(Math.random() < 0.75 ? HEART_LINES : CHEER_LINES, ['sad'])
+    }
+    if (kind === 'song') {
+      return this.sayMood(SONG_LINES, ['sing'])
+    }
+    if (kind === 'chat') {
+      return this.sayMood(CHAT_LINES, ['think'])
+    }
+    if (kind === 'time') {
+      return this.sayMood(TIME_LINES[this.timeSlot()], ['happy'])
+    }
+    if (kind === 'breakfast' || kind === 'lunch' || kind === 'dinner') {
+      return this.sayMood(MEAL_LINES[kind], ['eat'])
+    }
+    return this.sayMood(CHAT_LINES, ['think'])
+  },
+
+  /* 先挑台词，再按台词的情绪挑表情 —— 表情和内容是同一件事，不再各随机各的 */
+  sayMood(pool, fallback) {
+    const t = this.pick(pool)
+    this.setExpr(exprFor(t, fallback))
+    return this.sayText(t)
+  },
+
+  sayText(str) {
+    this.fullText = (str || '').replace(/\{nick\}/g, this.nick)
+    this.marqPos = 0
+    this.marqTick = 0
+    this.relayoutText()
+  },
+
+  setExpr(name) {
+    this.expr = name
+    this.frame = 0
+    this.emojiSrc = emojiPath(name, 0)
+  },
+
+  /* ---------------- 好感度 ---------------- */
+
+  levelLv() {
+    return this.level ? this.level.lv : 1
+  },
+
+  /* 启动时结算每日登录：加好感、说问候、再触发今天的消息 */
+  bootAff() {
+    const self = this
+    dailyLogin(function (r) {
+      self.applyAff(r.st)
+      if (r.gain > 0 && !self.dev) self.showGain(r.gain)
+      self.sayLogin(r)
+      self.refreshInbox()
+    })
+  },
+
+  /* 把一份好感度状态同步到界面（开发者模式下按满值显示） */
+  applyAff(st) {
+    if (!st) return
+    this.affState = st
+    this.dev = isDev(st)
+    this.aff = effAff(st)
+    this.level = levelOf(this.aff)
+    this.updateAffUI()
+  },
+
+  /* 重新读一次好感度（现在读的是进程内那份，同步返回，不会读到旧存档） */
+  refreshAff() {
+    const self = this
+    loadAff(function (st) { self.applyAff(st) })
+  },
+
+  sayLogin(r) {
+    this.welcomed = true
+    if (r.first) {
+      this.setExpr('idle')
+      this.sayText(this.pick(WELCOME))
+      return
+    }
+    if (r.levelUp && !this.dev) {
+      const pool = LEVEL_UP_LINES[r.levelUp.lv]
+      this.setExpr('love')
+      if (pool && pool.length) { this.sayText(this.pick(pool)); return }
+    }
+    if (r.comeback) {
+      this.setExpr('sad')
+      this.sayText(this.pick(LOGIN_LINES.comeback))
+      return
+    }
+    if (r.gain === 0) {
+      this.setExpr('happy')
+      this.sayText(this.pick(LOGIN_LINES.again))
+      return
+    }
+    this.setExpr('happy')
+    const line = this.pick(LOGIN_LINES.streak)
+    this.sayText(line.replace('{n}', '' + (r.streak || 1)))
+  },
+
+  /* 每个时段第一次点她 → +1；同步在本地记一笔，避免连点重复计数 */
+  claimSlot(slot) {
+    // v2.9.1：不再在页面里先 push 一次。
+    // 现在 affinity.js 只有一份内存状态，touchSlot 内部就是同步判断 + 同步加，
+    // 页面再记一笔反而会让 touchSlot 认为「这个时段已经领过」而不加分。
+    const self = this
+    touchSlot(slot, function (r) {
+      self.applyAff(r.st)
+      if (r.gain > 0 && !self.dev) self.showGain(r.gain)
+      if (r.levelUp && !self.dev) {
+        const pool = LEVEL_UP_LINES[r.levelUp.lv]
+        if (pool && pool.length) {
+          self.setExpr('love')
+          self.sayText(self.pick(pool))
+        }
+      }
+    })
+  },
+
+  showGain(n) {
+    this.affTip = (n > 0 ? '+' : '') + n
+    this.affTipTicks = 0
+  },
+
+  updateAffUI() {
+    const lv = this.level || levelOf(this.aff || 0)
+    this.affText = 'Lv.' + lv.lv + ' ' + (this.aff || 0)
+    this.affCls = lv.lv >= 5 ? 'aff-hi' : (lv.lv >= 3 ? 'aff-mid' : 'aff-lo')
+  },
+
+  pickExpr() {
+    const lv = this.levelLv()
+    const pool = lv >= 3 ? EXPR : EXPR.filter(function (e) { return EXPR_HI.indexOf(e) < 0 })
+    return this.pick(pool)
+  },
+
+  timeSlot() {
+    const h = new Date().getHours()
+    if (h >= 5 && h < 8) return 'dawn'
+    if (h >= 8 && h < 11) return 'morning'
+    if (h >= 11 && h < 13) return 'noon'
+    if (h >= 13 && h < 17) return 'afternoon'
+    if (h >= 17 && h < 20) return 'evening'
+    if (h >= 20 && h < 23) return 'night'
+    return 'late'
+  },
+
+  pick(arr) {
+    if (!arr || !arr.length) return ''
+    return arr[Math.floor(Math.random() * arr.length)]
+  },
+
+  fmtClock() {
+    const d = new Date()
+    const h = d.getHours()
+    const m = d.getMinutes()
+    return (h < 10 ? '0' + h : '' + h) + ':' + (m < 10 ? '0' + m : '' + m)
+  },
+
+  /* ---------------- 页面跳转 ---------------- */
+
+  /* 刷新未读红点，并按「日期+时段」触发新对话 */
+  refreshInbox() {
+    if (this._trigBusy) return                     // 防止 onInit / onShow 并发触发两次
+    this._trigBusy = true
+    const self = this
+    maybeTrigger(function (st) {
+      self._trigBusy = false
+      self.hasUnread = unreadCount(st) > 0
+    })
+  },
+
+  onInbox() {
+    this.stopLoop()
+    try {
+      router.push({ uri: '/pages/inbox' })
+    } catch (e) {
+      this.startLoop()
+    }
+  },
+
+  /* 右滑退出 */
+  onSwipe(e) {
+    if (e && e.direction === 'right') this.onExit()
+  },
+
+  onSettings() {
+    this.stopLoop()
+    try {
+      router.push({ uri: '/pages/settings' })
+    } catch (e) {
+      this.startLoop()
+    }
+  },
+
+  onExit() {
+    this.stopLoop()
+    try {
+      app.terminate()
+    } catch (e) {}
+  }
+
+  /* v2.9.1：设置页的「表情动效 / 主动闲聊 / 文字速度」三项已按需求移除，
+     这三项固定走默认值（动效开、主动闲聊开、速度中），不再读写设置存档。 */
+}
+</script>
+
+<style>
+  .page {
+    width: 100%;
+    height: 100%;
+    flex-direction: column;
+    align-items: center;
+    position: relative;
+    overflow: hidden;
+    background-color: #000000;
+  }
+
+  /* 高斯光斑：模糊已经烘进 PNG，这里只负责摆放与调暗 */
+  .glow {
+    position: absolute;
+    object-fit: contain;
+  }
+
+  .topbar {
+    position: relative;
+    flex-direction: row;
+    justify-content: center;
+    align-items: center;
+    flex-shrink: 0;
+  }
+
+  /* 黑色毛玻璃按钮：半透明白 + 1px 亮边 */
+  .btn {
+    position: relative;
+    justify-content: center;
+    align-items: center;
+    background-color: rgba(255, 255, 255, 0.07);
+    border-width: 1px;
+    border-color: rgba(255, 255, 255, 0.13);
+  }
+
+  .dot {
+    position: absolute;
+    right: 0;
+    top: 0;
+    background-color: #ff4d4f;
+  }
+
+  .ico {
+    position: relative;
+    object-fit: contain;
+  }
+
+  .clock {
+    position: relative;
+    color: #f3f3f6;
+    font-weight: bold;
+  }
+
+  /* 好感度胶囊 */
+  .affchip {
+    position: relative;
+    justify-content: center;
+    align-items: center;
+    border-width: 1px;
+  }
+
+  .aff-lo {
+    position: relative;
+    background-color: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.09);
+  }
+
+  .aff-mid {
+    position: relative;
+    background-color: rgba(255, 255, 255, 0.09);
+    border-color: rgba(255, 255, 255, 0.16);
+  }
+
+  .aff-hi {
+    position: relative;
+    background-color: rgba(255, 255, 255, 0.15);
+    border-color: rgba(255, 255, 255, 0.26);
+  }
+
+  .aff-t {
+    position: relative;
+    color: #f3f3f6;
+  }
+
+  .afftip {
+    position: relative;
+    color: #66ccff;
+  }
+
+  .playarea {
+    position: relative;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    flex-grow: 1;
+  }
+
+  .stage {
+    position: relative;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* 表情外框：黑色毛玻璃 */
+  .card {
+    position: relative;
+    align-items: center;
+    justify-content: center;
+    background-color: rgba(255, 255, 255, 0.06);
+    border-width: 1px;
+    border-color: rgba(255, 255, 255, 0.14);
+  }
+
+  .avatar {
+    position: relative;
+    object-fit: contain;
+  }
+
+  .bubble {
+    position: relative;
+    justify-content: center;
+    align-items: center;
+    background-color: rgba(255, 255, 255, 0.10);
+    border-width: 1px;
+    border-color: rgba(255, 255, 255, 0.14);
+  }
+
+  .bubble-text {
+    position: relative;
+    color: #f3f3f6;
+    lines: 1;
+  }
+
+  .bottombar {
+    position: relative;
+    flex-direction: row;
+    justify-content: center;
+    align-items: center;
+    flex-shrink: 0;
+  }
+</style>

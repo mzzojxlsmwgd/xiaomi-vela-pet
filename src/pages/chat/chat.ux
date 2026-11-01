@@ -1,0 +1,663 @@
+<template>
+  <div class="page" style="{{sPage}}">
+    <!-- 黑色毛玻璃底：高斯光斑（模糊已烘进 PNG，位置夹在画布内） -->
+    <image class="glow" src="{{glowSrc}}" style="{{sGlow}}" />
+
+    <div class="topbar" style="{{sTopbar}}">
+      <div class="btn" style="{{sBtn}}" onclick="onBack">
+        <image class="ico" src="/common/img/ic_back.png" style="{{sIco}}" />
+      </div>
+      <text class="title" style="{{sTitle}}">{{title}}</text>
+    </div>
+
+    <!-- 消息区：流式布局 + 整句显示（自动换行，不截断、不滚窗）。
+         上下拖动可以翻看更早的消息。 -->
+    <div class="msgwrap" style="{{sMsgWrap}}" ontouchstart="onTS" ontouchmove="onTM" ontouchend="onTE">
+      <div class="mrow {{$item.rowCls}}" style="{{sRow}}" for="{{msgs}}" key="{{$item.k}}">
+        <div class="bub {{$item.bubCls}}" style="{{sBub}}">
+          <image class="bub-img" if="{{$item.exprSrc}}" src="{{$item.exprSrc}}" style="{{sBubImg}}" />
+          <text class="bt" style="{{sBt}}">{{$item.disp}}</text>
+        </div>
+      </div>
+    </div>
+
+    <!-- 底部：输入中 / 选项 / 结局 -->
+    <div class="bottom" style="{{sBottom}}">
+      <text class="typing" if="{{showTyping}}" style="{{sTyping}}">{{typingHint}}</text>
+
+      <!-- 选项对话框：外面一层大圆角玻璃面板，里面的选项尺寸不变 -->
+      <div class="choicebox" if="{{showChoices}}" style="{{sChoiceBox}}">
+        <div class="choice" style="{{sChoice}}" for="{{choices}}" key="{{$idx}}"
+          onclick="onChoice($idx)">
+          <text class="choice-t" style="{{sChoiceT}}">{{$item.text}}</text>
+        </div>
+      </div>
+
+      <div class="endwrap" if="{{showEnd}}" style="{{sEndWrap}}">
+        <text class="ending" style="{{sEnding}}">结局 · {{endingName}}</text>
+        <text class="affchg" if="{{affText}}" style="{{sAffChg}}">{{affText}}</text>
+        <div class="acts" style="{{sActs}}">
+          <div class="act" style="{{sAct}}" onclick="onReplay">
+            <text class="act-t" style="{{sActT}}">再玩一次</text>
+          </div>
+          <div class="act act-main" style="{{sAct}}" onclick="onBack">
+            <text class="act-t" style="{{sActT}}">返回消息</text>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script>
+import router from '@system.router'
+import { TARGET } from '../../config/device-target.js'
+import { STORIES } from '../../config/stories.js'
+import { OPEN_KEY, markRead, markDone } from '../../config/inbox.js'
+import { storyReward, isDev } from '../../config/affinity.js'
+import { getString } from '../../config/store.js'
+import { emojiPath } from '../../config/emoji.js'
+import { stickerFor } from '../../config/mood.js'
+import { GLOW_SRC, glowStyle } from '../../config/theme.js'
+import { CHARACTER } from '../../config/character.js'
+
+const DW = 480
+const TICK = 60                 // 主循环 ms
+const REVEAL_TICKS = 14         // 每 14 个 tick 冒一条（≈840ms，留够阅读时间）
+const STICKER_CHANCE = 0.6      // 对方说话时夹带表情包的概率（挑哪张由台词情绪决定）
+
+export default {
+  private: {
+    typingHint: CHARACTER.typingHint,
+    sid: '',                     // 从 router params 接收的剧情 id
+    title: '',
+    storyId: '',
+    story: null,
+    stepId: '',
+    score: 0,
+    ended: false,
+    history: [],                 // [{ who:'her'|'me', text }]
+    queue: [],                   // 待冒出的台词
+    msgs: [],                    // 当前渲染窗口
+    choices: [],
+    phase: 'typing',
+    endingName: '',
+    grade: '',
+    affText: '',                 // 结局下方的好感度变化
+    showTyping: true,
+    showChoices: false,
+    showEnd: false,
+    tick: 0,
+    sinceReveal: 0,
+    scrollBack: 0,               // 往上翻了几条（0 = 贴底看最新）
+    timer: null,
+    // 拖动
+    k: 1, tY: 0, tAcc: 0, tDragging: false,
+    // 尺寸
+    ch: 540, topH: 76, fs: 20, lineH: 28, padV: 8, padH: 12,
+    textW: 312, msgAreaH: 400, exprH: 60,
+    sPage: '', sGlow: '', glowSrc: GLOW_SRC, sTopbar: '', sBtn: '', sIco: '', sTitle: '',
+    sMsgWrap: '', sRow: '', sBub: '', sBubImg: '', sBt: '', sBottom: '', sTyping: '',
+    sChoiceBox: '', sChoice: '', sChoiceT: '', sEndWrap: '', sEnding: '', sAffChg: '',
+    sActs: '', sAct: '', sActT: ''
+  },
+
+  onInit() {
+    this.apply(TARGET.W, TARGET.H)
+    // ① 优先用 router params（同步传递，没有「写完就读」的竞态）
+    const sid = this.sid || ''
+    if (sid) { this.openStory(sid); return }
+    // ② 兜底：读 storage（老路径 / params 丢失时）
+    const self = this
+    getString(OPEN_KEY, function (id) { self.openStory(id) })
+  },
+
+  onShow() { if (!this.timer) this.startLoop() },
+  onHide() { this.stopLoop() },
+  onDestroy() { this.stopLoop() },
+
+  /* ---------------- 尺寸 ---------------- */
+
+  apply(sw, sh) {
+    if (!sw || !sh) return
+    const k = DW / sw
+    const ch = Math.round(sh * k)
+    const btnPhys = Math.min(Math.max(sw * 0.1, 36), 52)
+    const btn = Math.round(btnPhys * k)
+    const ico = Math.round(btn * 0.5)
+    const fsPhys = Math.min(Math.max(sw * 0.042, 13), 19)
+    const fs = Math.round(fsPhys * k)
+    const topH = btn + Math.round(fs * 1.6)
+
+    this.k = k
+    this.ch = ch
+    this.topH = topH
+    this.fs = fs
+    this.lineH = Math.round(fs * 1.38)
+    this.padV = Math.round(fs * 0.42)
+    this.padH = Math.round(fs * 0.6)
+    // 气泡外框宽 = 画布 70%，减去左右内边距才是文字宽度
+    this.textW = Math.round(DW * 0.70) - this.padH * 2
+
+    this.sPage = 'width:' + DW + 'px;height:' + ch + 'px;left:0;top:0;overflow:hidden;'
+    this.sGlow = glowStyle(DW * 0.5, ch * 0.16, Math.round(DW * 1.3), DW, ch, 0.30)
+    this.sTopbar = 'height:' + topH + 'px;padding-left:' + Math.round(DW * 0.06) +
+      'px;padding-right:' + Math.round(DW * 0.06) + 'px;'
+    this.sBtn = 'width:' + btn + 'px;height:' + btn + 'px;border-radius:' + Math.round(btn / 2) + 'px;'
+    this.sIco = 'width:' + ico + 'px;height:' + ico + 'px;'
+    this.sTitle = 'font-size:' + Math.round(fs * 1.02) + 'px;margin-left:' + Math.round(fs * 0.6) + 'px;'
+
+    // 行：高度不写死（气泡按内容自适应），只固定间距
+    this.sRow = 'width:' + DW + 'px;margin-top:' + Math.round(fs * 0.42) + 'px;'
+    // 气泡：宽度写死、高度自适应；文字不限行数（默认 lines:-1）→ 整句都在，不会被截掉
+    // 大圆角：1.5 倍字号（约等于气泡短边的一半，接近胶囊）
+    this.sBub = 'width:' + this.textW + 'px;padding-top:' + this.padV + 'px;padding-bottom:' +
+      this.padV + 'px;padding-left:' + this.padH + 'px;padding-right:' + this.padH +
+      'px;border-radius:' + Math.round(fs * 1.5) + 'px;border-width:1px;'
+    this.sBt = 'font-size:' + fs + 'px;line-height:' + this.lineH + 'px;width:' + this.textW + 'px;'
+    // 夹带的表情包：正方形，宽度跟着字号走
+    this.exprH = Math.round(fs * 3.0)
+    this.sBubImg = 'width:' + this.exprH + 'px;height:' + this.exprH + 'px;border-radius:' +
+      Math.round(fs * 0.5) + 'px;margin-bottom:' + Math.round(fs * 0.3) + 'px;'
+
+    this.sTyping = 'font-size:' + Math.round(fs * 0.82) + 'px;'
+
+    /* 选项：尺寸和以前完全一样（宽 0.84DW、高 2.5 字号），只把圆角做成真正的胶囊，
+       并在外面套一层大圆角玻璃面板，让「选择对话框」整块看起来是圆的。 */
+    const optW = Math.round(DW * 0.84)
+    const optH = Math.round(fs * 2.5)
+    const optGap = Math.round(fs * 0.3)
+    const boxPad = Math.round(fs * 0.5)
+    this.optW = optW
+    this.optH = optH
+    this.optGap = optGap
+    this.boxPad = boxPad
+    this.sChoiceBox = 'width:' + (optW + boxPad * 2) + 'px;padding-top:' + boxPad +
+      'px;padding-bottom:' + boxPad + 'px;padding-left:' + boxPad + 'px;padding-right:' + boxPad +
+      'px;border-radius:' + Math.round(optH * 0.62) + 'px;'
+    this.sChoice = 'width:' + optW + 'px;height:' + optH + 'px;border-radius:' +
+      Math.round(optH / 2) + 'px;margin-bottom:' + optGap + 'px;'
+    this.sChoiceT = 'font-size:' + Math.round(fs * 0.9) + 'px;'
+    this.sEnding = 'font-size:' + Math.round(fs * 0.86) + 'px;margin-bottom:' + Math.round(fs * 0.4) + 'px;'
+    this.sAffChg = 'font-size:' + Math.round(fs * 0.78) + 'px;margin-bottom:' + Math.round(fs * 0.4) + 'px;'
+    this.sActs = 'width:' + DW + 'px;flex-direction:row;justify-content:center;align-items:center;'
+    this.sAct = 'width:' + Math.round(DW * 0.38) + 'px;height:' + Math.round(fs * 2.5) +
+      'px;border-radius:' + Math.round(fs * 1.25) + 'px;margin-left:' + Math.round(DW * 0.02) +
+      'px;margin-right:' + Math.round(DW * 0.02) + 'px;'
+    this.sActT = 'font-size:' + Math.round(fs * 0.9) + 'px;'
+
+    this.layoutBottom()
+    this.rebuild()
+  },
+
+  bottomHeight(fs) {
+    if (this.phase === 'choices') {
+      const n = this.choices.length || 2
+      const optH = Math.round(fs * 2.5)
+      const optGap = Math.round(fs * 0.3)
+      const boxPad = Math.round(fs * 0.5)
+      // 圆角面板上下各 boxPad，里面 n 个选项（含各自的下间距）
+      return boxPad * 2 + n * (optH + optGap) + Math.round(fs * 0.3)
+    }
+    if (this.phase === 'end') {
+      return Math.round(fs * 0.86) + Math.round(fs * 0.4) + Math.round(fs * 0.78) +
+        Math.round(fs * 0.4) + Math.round(fs * 2.5) + Math.round(fs * 1.2)
+    }
+    return Math.round(fs * 2.6)
+  },
+
+  layoutBottom() {
+    const bottomH = this.bottomHeight(this.fs)
+    // 顶栏 + 消息区 + 底部 = 画布高，页面绝不溢出
+    this.msgAreaH = Math.max(60, this.ch - this.topH - bottomH)
+    this.sBottom = 'height:' + bottomH + 'px;width:' + DW + 'px;'
+    this.sMsgWrap = 'height:' + this.msgAreaH + 'px;width:' + DW + 'px;'
+    this.sEndWrap = 'width:' + DW + 'px;'
+  },
+
+  /* ---------------- 剧情 ---------------- */
+
+  openStory(id) {
+    let st = null
+    for (let i = 0; i < STORIES.length; i++) {
+      if (STORIES[i].id === id) st = STORIES[i]
+    }
+    if (!st) st = STORIES[0]
+
+    this.story = st
+    this.storyId = st.id
+    this.title = st.title
+    this.stepId = st.start
+    this.score = 0
+    this.ended = false
+    this.history = []
+    this.queue = []
+    this.choices = []
+    this.endingName = ''
+    this.grade = ''
+    this.tick = 0
+    this.sinceReveal = 0
+    this.scrollBack = 0
+    this.phase = 'typing'
+
+    markRead(st.id)
+    this.apply(TARGET.W, TARGET.H)
+    this.setPhase('typing')
+    this.enterStep(st.start)
+    this.startLoop()
+  },
+
+  enterStep(id) {
+    const step = this.story.steps[id]
+    if (!step) { this.finish(); return }
+    this.stepId = id
+    const lines = step.say || []
+    for (let i = 0; i < lines.length; i++) this.queue.push(lines[i])
+    this.setPhase('typing')
+  },
+
+  setPhase(p) {
+    this.phase = p
+    this.showTyping = (p === 'typing')
+    this.showChoices = (p === 'choices')
+    this.showEnd = (p === 'end')
+    this.layoutBottom()
+    this.rebuild()
+  },
+
+  startLoop() {
+    const self = this
+    this.stopLoop()
+    this.timer = setInterval(function () { self.tickOnce() }, TICK)
+  },
+
+  stopLoop() {
+    if (this.timer) {
+      clearInterval(this.timer)
+      this.timer = null
+    }
+  },
+
+  tickOnce() {
+    this.tick++
+    if (!this.queue.length) return
+    this.sinceReveal++
+    if (this.sinceReveal < REVEAL_TICKS) return
+    this.sinceReveal = 0
+    // 夹带一张表情包：跟着这条消息一起出现，rebuild 时位置固定不变
+    const line = this.queue.shift()
+    this.history.push({ who: 'her', text: line, expr: this.rollSticker(line) })
+    // 正在上翻看旧消息时，新消息进来不动视野（保持锚点）
+    if (this.scrollBack > 0) this.scrollBack++
+    this.rebuild()
+    if (!this.queue.length) {
+      if (this.ended) this.setPhase('end')
+      else this.afterSay()
+    }
+  },
+
+  /* 掷一次：要不要夹带表情，夹带哪一张 —— 由这句台词的情绪决定（见 config/mood.js）
+     彩蛋里说话的可能不是角色本人，不该配角色的脸，直接不给贴纸。 */
+  rollSticker(line) {
+    if (this.story && this.story.noSticker) return ''
+    return stickerFor(line, STICKER_CHANCE)
+  },
+
+  afterSay() {
+    const step = this.story.steps[this.stepId]
+    if (!step) { this.finish(); return }
+    if (step.finish) { this.finish(); return }
+    if (step.choices && step.choices.length) {
+      this.choices = step.choices
+      this.setPhase('choices')
+      return
+    }
+    if (step.next) { this.enterStep(step.next); return }
+    this.finish()
+  },
+
+  onChoice(idx) {
+    if (this.phase !== 'choices') return
+    const c = this.choices[idx]
+    if (!c) return
+    this.history.push({ who: 'me', text: c.text })
+    this.score += (c.score || 0)
+    this.choices = []
+    this.sinceReveal = 0
+    this.scrollBack = 0
+    this.setPhase('typing')
+    this.enterStep(c.next)
+  },
+
+  finish() {
+    if (this.ended) return
+    this.ended = true
+    const st = this.story
+    let grade = 'normal'
+    if (this.score >= 2) grade = 'good'
+    else if (this.score <= -1) grade = 'bad'
+    const e = (st.endings && st.endings[grade]) || { name: '结局', say: ['……'] }
+    this.grade = grade
+    this.endingName = e.name
+    this.affText = ''
+    const lines = e.say || []
+    for (let i = 0; i < lines.length; i++) this.queue.push(lines[i])
+    this.setPhase('typing')
+    // 彩蛋通关会自动放出最终消息（逻辑在 inbox.markDone 里，页面不用管）
+    markDone(st.id, grade)
+
+    // 彩蛋不结算好感度：都满级了，加减都没意义，也不该冒出「好感没变哦」
+    if (st.noReward) {
+      this.affText = ''
+      this.layoutBottom()
+      return
+    }
+
+    // 好感度结算：首次通关按选项分数给，重玩只有刷新最好结局才给一半
+    const self = this
+    storyReward(st.id, grade, this.score, function (r) {
+      if (isDev(r.st)) {
+        self.affText = '开发者模式 · 好感已满'
+        self.layoutBottom()
+        return
+      }
+      let t = ''
+      if (r.delta > 0) t = '好感 +' + r.delta
+      else if (r.delta < 0) t = '好感 ' + r.delta
+      else t = '好感没变哦'
+      if (!r.first) t = '重玩 · ' + t
+      if (r.levelUp) t = t + ' · 升到 Lv.' + r.levelUp.lv
+      self.affText = t
+      self.layoutBottom()
+    })
+  },
+
+  onReplay() { this.openStory(this.storyId) },
+
+  onBack() {
+    this.stopLoop()
+    try {
+      router.back()
+    } catch (e) {
+      this.startLoop()
+    }
+  },
+
+  /* ---------------- 拖动翻看历史 ---------------- */
+
+  onTS(e) {
+    const t = e && e.touches && e.touches[0]
+    if (!t) return
+    this.tY = t.clientY
+    this.tAcc = 0
+    this.tDragging = true
+  },
+
+  onTM(e) {
+    if (!this.tDragging) return
+    const t = e && e.touches && e.touches[0]
+    if (!t) return
+    // 触摸坐标是物理 px，换算成设计 px（480 宽画布）
+    this.tAcc += (t.clientY - this.tY) * this.k
+    this.tY = t.clientY
+    const unit = Math.round(this.fs * 2.2)
+    if (Math.abs(this.tAcc) < unit) return
+    // 手指下滑 → 看更早的消息；上滑 → 回到最新
+    const step = this.tAcc > 0 ? 1 : -1
+    this.tAcc = 0
+    const maxBack = Math.max(0, this.history.length - 1)
+    const nb = Math.max(0, Math.min(maxBack, this.scrollBack + step))
+    if (nb !== this.scrollBack) {
+      this.scrollBack = nb
+      this.rebuild()
+    }
+  },
+
+  onTE() {
+    this.tDragging = false
+    this.tAcc = 0
+  },
+
+  /* ---------------- 渲染 ---------------- */
+
+  /* 每行大约能放几个字（中文按 1 em 算，留 12% 余量，宁可少算也别让真实换行多一行） */
+  charsPerLine() {
+    return Math.max(1, Math.floor(this.textW / (this.fs * 1.12)))
+  },
+
+  /* 估算一条消息占多高（只用来决定「这一屏能放几条」，真实高度由布局引擎算） */
+  estHeight(text, expr) {
+    const per = this.charsPerLine()
+    const n = Math.min(4, Math.max(1, Math.ceil((text || '').length / per)))
+    // 夹带了表情包的气泡要多算「表情高度 + 它与文字之间的间距」
+    const extra = expr ? this.exprH + Math.round(this.fs * 0.3) : 0
+    return n * this.lineH + this.padV * 2 + Math.round(this.fs * 0.42) + extra
+  },
+
+  /* 从最新往回数，凑满一屏能放下的条数；scrollBack 表示往上翻了几条 */
+  rebuild() {
+    if (!this.story) return
+    const h = this.history
+    if (!h.length) { this.msgs = []; return }
+
+    let back = this.scrollBack
+    if (back > h.length - 1) back = Math.max(0, h.length - 1)
+
+    const end = h.length - back        // 窗口右边界（不含）
+    // 留一行余量：估算总比真实排版保守一点，避免最上面一条被裁
+    const budget = this.msgAreaH - this.lineH
+    let sum = 0
+    let from = end
+    for (let i = end - 1; i >= 0; i--) {
+      const eh = this.estHeight(h[i].text, h[i].expr)
+      if (sum + eh > budget && from < end) break
+      sum += eh
+      from = i
+    }
+
+    const out = []
+    for (let i = from; i < end; i++) {
+      const m = h[i]
+      const her = m.who === 'her'
+      out.push({
+        k: 'm' + i,
+        disp: m.text,
+        exprSrc: m.expr ? emojiPath(m.expr, 0) : '',
+        rowCls: her ? 'mrow-her' : 'mrow-me',
+        bubCls: her ? 'bub-her' : 'bub-me'
+      })
+    }
+    this.msgs = out
+  }
+}
+</script>
+
+<style>
+  .page {
+    position: absolute;
+    flex-direction: column;
+    align-items: center;
+    background-color: #000000;
+  }
+
+  /* 高斯光斑：模糊已烘进 PNG，这里只负责摆放与调暗 */
+  .glow {
+    position: absolute;
+    object-fit: contain;
+  }
+
+  .topbar {
+    position: relative;
+    flex-direction: row;
+    justify-content: center;
+    align-items: center;
+    flex-shrink: 0;
+  }
+
+  .btn {
+    position: relative;
+    justify-content: center;
+    align-items: center;
+    background-color: rgba(255, 255, 255, 0.07);
+    border-width: 1px;
+    border-color: rgba(255, 255, 255, 0.13);
+  }
+
+  .ico {
+    position: relative;
+    object-fit: contain;
+  }
+
+  .title {
+    position: relative;
+    color: #f3f3f6;
+    font-weight: bold;
+    lines: 1;
+  }
+
+  /* 消息区：纵向排列，从底部往上堆 */
+  .msgwrap {
+    position: relative;
+    flex-direction: column;
+    justify-content: flex-end;
+    align-items: center;
+    flex-shrink: 0;
+    overflow: hidden;
+  }
+
+  .mrow {
+    position: relative;
+    flex-direction: row;
+    align-items: flex-start;
+    flex-shrink: 0;
+  }
+
+  .mrow-her {
+    position: relative;
+    justify-content: flex-start;
+  }
+
+  .mrow-me {
+    position: relative;
+    justify-content: flex-end;
+  }
+
+  .bub {
+    position: relative;
+    flex-direction: column;
+    justify-content: center;
+    align-items: flex-start;
+    flex-shrink: 0;
+  }
+
+  /* 夹带的表情包 */
+  .bub-img {
+    position: relative;
+    flex-shrink: 0;
+    object-fit: contain;
+  }
+
+  /* 黑色毛玻璃气泡：她那边淡一点，我这边亮一点，靠亮度区分，不用颜色 */
+  .bub-her {
+    position: relative;
+    margin-left: 24px;
+    margin-right: 0;
+    background-color: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.10);
+  }
+
+  .bub-me {
+    position: relative;
+    margin-left: 0;
+    margin-right: 24px;
+    background-color: rgba(255, 255, 255, 0.17);
+    border-color: rgba(255, 255, 255, 0.20);
+  }
+
+  /* 不限行数：整句都显示，长的自动折行 */
+  .bt {
+    position: relative;
+    color: #f3f3f6;
+  }
+
+  .bottom {
+    position: relative;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-end;
+    flex-shrink: 0;
+  }
+
+  .typing {
+    position: relative;
+    color: #7d7d86;
+  }
+
+  /* 选项对话框外框：大圆角玻璃面板（模糊靠底下的光斑 + 半透明白） */
+  .choicebox {
+    position: relative;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background-color: rgba(255, 255, 255, 0.05);
+    border-width: 1px;
+    border-color: rgba(255, 255, 255, 0.10);
+  }
+
+  .choice {
+    position: relative;
+    justify-content: center;
+    align-items: center;
+    background-color: rgba(255, 255, 255, 0.09);
+    border-width: 1px;
+    border-color: rgba(255, 255, 255, 0.16);
+  }
+
+  .choice-t {
+    position: relative;
+    color: #f3f3f6;
+  }
+
+  .endwrap {
+    position: relative;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .ending {
+    position: relative;
+    color: #f3f3f6;
+    font-weight: bold;
+  }
+
+  .affchg {
+    position: relative;
+    color: #9a9aa3;
+  }
+
+  .acts {
+    position: relative;
+    align-items: center;
+  }
+
+  .act {
+    position: relative;
+    justify-content: center;
+    align-items: center;
+    background-color: rgba(255, 255, 255, 0.06);
+    border-width: 1px;
+    border-color: rgba(255, 255, 255, 0.12);
+  }
+
+  .act-main {
+    position: relative;
+    background-color: rgba(255, 255, 255, 0.18);
+    border-color: rgba(255, 255, 255, 0.24);
+  }
+
+  .act-t {
+    position: relative;
+    color: #f3f3f6;
+  }
+</style>

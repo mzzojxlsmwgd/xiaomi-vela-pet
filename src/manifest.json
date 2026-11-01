@@ -1,0 +1,52 @@
+{
+  "package": "com.example.velapet",
+  "name": "桌宠框架",
+  "versionName": "1.0.0",
+  "versionCode": 1,
+  "minPlatformVersion": 1200,
+  "icon": "/common/img/icon.png",
+  "deviceTypeList": [
+    "watch"
+  ],
+  "features": [
+    {
+      "name": "system.router"
+    },
+    {
+      "name": "system.storage"
+    },
+    {
+      "name": "system.device"
+    },
+    {
+      "name": "system.prompt"
+    }
+  ],
+  "config": {
+    "logLevel": "log",
+    "designWidth": 480
+  },
+  "display": {
+    "backgroundColor": "#000000"
+  },
+  "router": {
+    "entry": "pages/index",
+    "pages": {
+      "pages/index": {
+        "component": "index"
+      },
+      "pages/inbox": {
+        "component": "inbox"
+      },
+      "pages/chat": {
+        "component": "chat"
+      },
+      "pages/settings": {
+        "component": "settings"
+      },
+      "pages/about": {
+        "component": "about"
+      }
+    }
+  }
+}

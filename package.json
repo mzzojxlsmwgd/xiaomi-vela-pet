@@ -1,0 +1,29 @@
+{
+  "name": "vela-pet-framework",
+  "version": "1.0.0",
+  "description": "Vela 穿戴桌宠框架 —— 小米手环 / 红米手表桌宠快应用模板，自备素材与文案",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=8.10"
+  },
+  "scripts": {
+    "build": "aiot build",
+    "release": "aiot release",
+    "story": "node tools/gen_story_meta.mjs && node tools/check_stories.mjs",
+    "check": "node tools/check_stories.mjs",
+    "emoji": "python tools/gen_placeholder_emoji.py",
+    "icons": "python tools/gen_icons.py",
+    "layout": "python tools/verify_layout.py",
+    "pack": "python tools/build_models.py",
+    "sign": "python tools/gen_sign_key.py",
+    "test": "node tools/smoke_test.mjs"
+  },
+  "devDependencies": {
+    "aiot-toolkit": "1.1.4"
+  },
+  "browserslist": [
+    "chrome 65"
+  ]
+}

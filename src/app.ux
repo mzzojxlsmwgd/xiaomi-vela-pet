@@ -1,0 +1,12 @@
+<script>
+import { CHARACTER } from './config/character.js'
+
+export default {
+  onCreate() {
+    console.log(CHARACTER.appName + ' created')
+  },
+  onDestroy() {
+    console.log(CHARACTER.appName + ' destroyed')
+  }
+}
+</script>
