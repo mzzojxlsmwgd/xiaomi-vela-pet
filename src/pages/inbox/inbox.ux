@@ -51,11 +51,12 @@
 <script>
 import router from '@system.router'
 import prompt from '@system.prompt'
+import device from '@system.device'
 import { TARGET } from '../../config/device-target.js'
 import { loadState, buildList, OPEN_KEY } from '../../config/inbox.js'
 import { setString } from '../../config/store.js'
 import { loadAff, levelOf, effAff, isDev } from '../../config/affinity.js'
-import { dateLabel } from '../../config/dates.js'
+import { dateLabel, shortDate } from '../../config/dates.js'
 import { MAX_TITLE_LEN } from '../../config/story-meta.js'
 import { CHARACTER } from '../../config/character.js'
 import { GLOW_SRC, glowStyle } from '../../config/theme.js'
@@ -86,19 +87,38 @@ export default {
   },
 
   onInit() {
-    this.dateText = dateLabel(new Date())
-    this.apply(TARGET.W, TARGET.H)
+    const self = this
+    this.apply(TARGET.W, TARGET.H)          // 先用写死分辨率兜底
+    // 再用设备真实屏幕精修 —— 否则装到手环 10 Pro（480×336 横屏）上，
+    // 页面会按写死的 432×514 算高度，整块列表被切掉一半
+    try {
+      device.getInfo({
+        success(ret) {
+          if (ret && ret.screenWidth && ret.screenHeight) {
+            self.apply(ret.screenWidth, ret.screenHeight)
+          }
+        },
+        fail() {}
+      })
+    } catch (e) {}
   },
 
   onShow() {
-    this.dateText = dateLabel(new Date())
+    this.syncDate()
     this.refresh()
+  },
+
+  /* 日期文案：窄屏（手环 10 的 212px）放不下「11月6日 星期五」，改用 11/06 */
+  syncDate() {
+    const d = new Date()
+    this.dateText = this.narrow ? shortDate(d) : dateLabel(d)
   },
 
   apply(sw, sh) {
     if (!sw || !sh) return
     const k = DW / sw
     const ch = Math.round(sh * k)
+    const narrow = sw < 280                 // 手环 10 这类窄屏
     const btnPhys = Math.min(Math.max(sw * 0.105, 38), 56)
     const btn = Math.round(btnPhys * k)
     const ico = Math.round(btn * 0.5)
@@ -111,8 +131,9 @@ export default {
     /* 只显示标题：行高 = 头像高 + 上下留白，不再算简介行。
        （以前按「标题 1 行 + 简介 2 行」算，差几个 px 底部就被裁 → 就是「显示不全」） */
     const padV0 = Math.round(fs * 0.58)
-    const ava0 = Math.min(Math.round(fs * 2.2), Math.round(DW * 0.22))
-    const gapH = Math.max(6, Math.round(fs * 0.4))
+    // 窄屏头像给大一点，不然一行里那颗小圆点看着像标点
+    const ava0 = Math.min(Math.round(fs * (narrow ? 2.5 : 2.2)), Math.round(DW * 0.24))
+    const gapH = Math.max(8, Math.round(fs * 0.5))
     const availH = bodyH - pgH - gapH
     let rowH = Math.max(ava0 + padV0 * 2, Math.round(fs * 2.4))
     let perPage = Math.floor(availH / (rowH + gapH))
@@ -121,6 +142,11 @@ export default {
       rowH = Math.max(Math.round(fs * 1.9), Math.floor(availH / 3) - gapH)
       perPage = Math.floor(availH / (rowH + gapH))
     }
+    // 一页最多 7 条：再多就挤成一片了
+    perPage = Math.max(1, Math.min(perPage, 7))
+    // 行高按页数把可用高度摊开，避免底部留一大块空白（上限 4.2 字号，别胖得离谱）
+    const rowCap = Math.round(fs * 4.2)
+    rowH = Math.min(rowCap, Math.max(rowH, Math.floor(availH / perPage) - gapH))
 
     const padV = Math.min(padV0, Math.max(2, Math.round(rowH * 0.24)))
     const ava = Math.min(ava0, Math.max(1, rowH - padV * 2))
@@ -134,12 +160,12 @@ export default {
     /* 标题只有一行（lines:1），窄屏上字太大就会被裁 ——
        按「最长标题要能放下」回收字号，下限 0.82×fs，再小就不好读了 */
     const fitFs = Math.floor(midW / (MAX_TITLE_LEN * 1.04))
-    const nameFs = Math.max(Math.round(fs * 0.82), Math.min(Math.round(fs * 1.06), fitFs))
+    const nameFs = Math.max(Math.round(fs * 0.78), Math.min(Math.round(fs * 1.06), fitFs))
     const nameLH = Math.round(nameFs * 1.34)
     // 兜底：压薄行高以后文字可能反而放不下，再撑回来
     if (rowH < nameLH + padV * 2) {
       rowH = nameLH + padV * 2
-      perPage = Math.floor(availH / (rowH + gapH))
+      perPage = Math.max(1, Math.min(7, Math.floor(availH / (rowH + gapH))))
     }
     perPage = Math.max(1, Math.min(perPage, 10))
 
@@ -152,32 +178,40 @@ export default {
     this.sGlow = glowStyle(DW * 0.5, topH + bodyH * 0.24, Math.round(DW * 1.4), DW, ch, 0.34)
     this.sTopbar = 'height:' + topH + 'px;padding-left:' + Math.round(DW * 0.06) +
       'px;padding-right:' + Math.round(DW * 0.06) + 'px;'
-    this.sBtn = 'width:' + btn + 'px;height:' + btn + 'px;border-radius:' + Math.round(btn / 2) + 'px;'
+    this.sBtn = 'width:' + btn + 'px;height:' + btn + 'px;border-width:1px;border-color:rgba(255,255,255,0.13);border-radius:' + Math.round(btn / 2) + 'px;'
     this.sIco = 'width:' + ico + 'px;height:' + ico + 'px;'
-    this.sTitle = 'font-size:' + Math.round(fs * 1.15) + 'px;margin-left:' + Math.round(fs * 0.7) + 'px;'
-    this.sDate = 'font-size:' + Math.round(fs * 0.74) + 'px;'
-    this.sAff = 'font-size:' + Math.round(fs * 0.72) + 'px;margin-top:2px;'
+    /* 每个 text 都必须显式给 line-height ——
+       不写就用设备默认行高（各平台 1.3~1.5 不等），顶栏三行的高度就不可控了。
+       统一按 1.3 倍字号锁死。 */
+    const titleFs = Math.round(fs * 1.15)
+    const dateFs = Math.round(fs * 0.74)
+    const affFs = Math.round(fs * 0.72)
+    this.sTitle = 'font-size:' + titleFs + 'px;line-height:' + Math.round(titleFs * 1.3) +
+      'px;margin-left:' + Math.round(fs * 0.7) + 'px;'
+    this.sDate = 'font-size:' + dateFs + 'px;line-height:' + Math.round(dateFs * 1.3) + 'px;'
+    this.sAff = 'font-size:' + affFs + 'px;line-height:' + Math.round(affFs * 1.3) +
+      'px;margin-top:2px;'
     this.sRight = 'height:' + topH + 'px;'
 
     this.sBody = 'height:' + bodyH + 'px;width:' + DW + 'px;'
 
-    this.sAva = 'width:' + ava + 'px;height:' + ava + 'px;border-radius:' + Math.round(ava * 0.36) + 'px;'
+    this.sAva = 'width:' + ava + 'px;height:' + ava + 'px;border-width:1px;border-color:rgba(255,255,255,0.06);border-radius:' + Math.round(ava * 0.36) + 'px;'
     this.sAvaImg = 'width:' + Math.round(ava * 0.92) + 'px;height:' + Math.round(ava * 0.92) +
-      'px;border-radius:' + Math.round(ava * 0.3) + 'px;'
+      'px;border-width:1px;border-color:rgba(255,255,255,0.06);border-radius:' + Math.round(ava * 0.3) + 'px;'
     this.sMid = 'width:' + midW + 'px;margin-left:' + midGap + 'px;'
     // 行样式对所有行都一样（高度/间距固定）→ 用统一变量，不逐行算，避免样式过期错位
     this.sRow = 'height:' + rowH + 'px;width:' + rowW +
       'px;margin-bottom:' + gapH + 'px;padding-left:' + rowPadH +
       'px;padding-right:' + rowPadH +
-      'px;border-radius:' + Math.round(rowH * 0.44) + 'px;'
+      'px;border-width:1px;border-color:rgba(255,255,255,0.13);border-radius:' + Math.round(rowH * 0.44) + 'px;'
     this.sName = 'font-size:' + nameFs + 'px;line-height:' + nameLH + 'px;'
     const dot = Math.round(fs * 0.62)
-    this.sDot = 'width:' + dot + 'px;height:' + dot + 'px;border-radius:' + Math.round(dot / 2) +
+    this.sDot = 'width:' + dot + 'px;height:' + dot + 'px;border-width:1px;border-color:#ff4d4f;border-radius:' + Math.round(dot / 2) +
       'px;right:' + rowPadH + 'px;top:' + Math.round(rowH * 0.24) + 'px;'
 
     this.sPager = 'height:' + pgH + 'px;width:' + DW + 'px;bottom:' + Math.round(fs * 0.5) + 'px;'
     const pg = Math.round(fs * 2.1)
-    this.sPg = 'width:' + pg + 'px;height:' + pg + 'px;border-radius:' + Math.round(pg / 2) + 'px;'
+    this.sPg = 'width:' + pg + 'px;height:' + pg + 'px;border-width:1px;border-color:rgba(255,255,255,0.13);border-radius:' + Math.round(pg / 2) + 'px;'
     this.sPgT = 'font-size:' + Math.round(fs * 1.1) + 'px;'
     this.sPgN = 'font-size:' + Math.round(fs * 0.8) + 'px;margin-left:' + Math.round(fs * 0.8) +
       'px;margin-right:' + Math.round(fs * 0.8) + 'px;'
@@ -186,6 +220,7 @@ export default {
     this.sEmptyT = 'font-size:' + Math.round(fs * 0.95) + 'px;'
     this.sEmptyS = 'font-size:' + Math.round(fs * 0.78) + 'px;margin-top:' + Math.round(fs * 0.5) + 'px;'
 
+    this.syncDate()
     this.refresh()
   },
 
@@ -194,7 +229,10 @@ export default {
     loadAff(function (aff) {
       const v = effAff(aff)
       const lv = levelOf(v)
-      self.affText = 'Lv.' + lv.lv + ' ' + lv.name + ' · ' + v + (isDev(aff) ? ' (开发)' : '')
+      // 窄屏（212px）塞不下「Lv.1 初识 · 0」+ 日期 + 返回键三样，只留等级
+      self.affText = self.narrow
+        ? 'Lv.' + lv.lv
+        : 'Lv.' + lv.lv + ' ' + lv.name + ' · ' + v + (isDev(aff) ? ' (开发)' : '')
       self.affCls = lv.lv >= 5 ? 'aff-hi' : (lv.lv >= 3 ? 'aff-mid' : 'aff-lo')
       loadState(function (st) {
         self.all = buildList(st, aff)
@@ -295,6 +333,7 @@ export default {
 
   .btn {
     position: relative;
+    flex-shrink: 0;          /* 顶栏内容再多也不许把返回键压没 */
     justify-content: center;
     align-items: center;
     background-color: rgba(255, 255, 255, 0.07);
@@ -309,13 +348,16 @@ export default {
 
   .title {
     position: relative;
+    flex-shrink: 0;
     color: #f3f3f6;
     font-weight: bold;
+    lines: 1;
   }
 
   .date {
     position: relative;
     color: #7d7d86;
+    lines: 1;
   }
 
   .rightcol {
@@ -323,11 +365,13 @@ export default {
     flex-direction: column;
     align-items: flex-end;
     justify-content: center;
+    flex-shrink: 0;
   }
 
   .affline {
     position: relative;
     color: #9a9aa3;
+    lines: 1;
   }
 
   .aff-lo {

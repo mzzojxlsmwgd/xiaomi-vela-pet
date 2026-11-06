@@ -42,6 +42,7 @@
 
 <script>
 import router from '@system.router'
+import device from '@system.device'
 import { TARGET } from '../../config/device-target.js'
 import { loadAff, levelOf, effAff, isDev, setDev, resetAff, DEV_MODE_ENABLED } from '../../config/affinity.js'
 import { GLOW_SRC, glowStyle } from '../../config/theme.js'
@@ -65,7 +66,19 @@ export default {
   },
 
   onInit() {
-    this.apply(TARGET.W, TARGET.H)
+    const self = this
+    this.apply(TARGET.W, TARGET.H)          // 先用写死分辨率兜底
+    // 再用设备真实屏幕精修（否则 10 Pro 的 336 高会被按 514 算，整页下半截看不见）
+    try {
+      device.getInfo({
+        success(ret) {
+          if (ret && ret.screenWidth && ret.screenHeight) {
+            self.apply(ret.screenWidth, ret.screenHeight)
+          }
+        },
+        fail() {}
+      })
+    } catch (e) {}
     this.loadAffInfo()
   },
 
@@ -90,7 +103,7 @@ export default {
             ? '已满级'
             : ((lv.hint ? lv.hint + ' · ' : '') + '下一级 ' + lv.nextNeed))
       const w = Math.round((self.barW || 300) * (dev ? 100 : lv.pct) / 100)
-      self.sBarIn = 'width:' + Math.max(0, w) + 'px;height:100%;border-radius:' +
+      self.sBarIn = 'width:' + Math.max(0, w) + 'px;height:100%;border-width:1px;border-color:#66ccff;border-radius:' +
         Math.round((self.barH || 10) / 2) + 'px;background-color:' + (dev ? '#7ef0c0' : '#66ccff') +
         ';position:relative;'
     })
@@ -163,16 +176,18 @@ export default {
     }
 
     this.sTopbar = 'height:' + topH + 'px;padding-left:' + pad + 'px;padding-right:' + pad + 'px;'
-    this.sBtn = 'width:' + btn + 'px;height:' + btn + 'px;border-radius:' + Math.round(btn / 2) + 'px;'
+    this.sBtn = 'width:' + btn + 'px;height:' + btn + 'px;border-width:1px;border-color:rgba(255,255,255,0.13);border-radius:' + Math.round(btn / 2) + 'px;'
     this.sIco = 'width:' + ico + 'px;height:' + ico + 'px;'
-    this.sTitle = 'font-size:' + Math.round(fs * 1.05) + 'px;margin-left:' + Math.round(fs * 0.6) + 'px;'
+    const titleFs = Math.round(fs * 1.05)
+    this.sTitle = 'font-size:' + titleFs + 'px;line-height:' + Math.round(titleFs * 1.3) +
+      'px;margin-left:' + Math.round(fs * 0.6) + 'px;'
     this.sBody = 'height:' + bodyH + 'px;padding-top:' + Math.round(fs * 0.3) +
       'px;padding-bottom:' + bottomPad + 'px;'
     this.sGlow = glowStyle(DW * 0.5, topH + bodyH * 0.2, Math.round(DW * 1.3), DW, ch, 0.30)
 
     this.sRow = 'width:' + rowW + 'px;height:' + rowH + 'px;margin-bottom:' + gap +
       'px;padding-left:' + Math.round(fs * 0.9) + 'px;padding-right:' + Math.round(fs * 0.9) +
-      'px;border-radius:' + Math.round(rowH * 0.46) + 'px;'
+      'px;border-width:1px;border-color:rgba(255,255,255,0.13);border-radius:' + Math.round(rowH * 0.46) + 'px;'
     this.sK = 'font-size:' + fs + 'px;'
     this.sV = 'font-size:' + fs + 'px;'
 
@@ -182,13 +197,13 @@ export default {
     this.barH = barH
     this.sAffBox = 'width:' + boxW + 'px;padding-top:' + boxPadV + 'px;padding-bottom:' + boxPadV +
       'px;padding-left:' + Math.round(fs * 0.9) + 'px;padding-right:' + Math.round(fs * 0.9) +
-      'px;border-radius:' + Math.round(fs * 1.15) + 'px;margin-bottom:' + gap + 'px;'
+      'px;border-width:1px;border-color:rgba(255,255,255,0.12);border-radius:' + Math.round(fs * 1.15) + 'px;margin-bottom:' + gap + 'px;'
     this.sAffT = 'font-size:' + Math.round(fs * 0.95) + 'px;line-height:' + Math.round(fs * 0.95 * 1.34) + 'px;'
     this.sAffH = 'font-size:' + Math.round(fs * 0.72) + 'px;line-height:' + Math.round(fs * 0.72 * 1.34) +
       'px;margin-top:' + Math.round(fs * 0.25) + 'px;margin-bottom:' + Math.round(fs * 0.4) + 'px;'
-    this.sBarBg = 'width:' + barW + 'px;height:' + barH + 'px;border-radius:' +
+    this.sBarBg = 'width:' + barW + 'px;height:' + barH + 'px;border-width:1px;border-color:rgba(255,255,255,0.08);border-radius:' +
       Math.round(barH / 2) + 'px;'
-    this.sBarIn = 'width:0px;height:100%;border-radius:' + Math.round(barH / 2) +
+    this.sBarIn = 'width:0px;height:100%;border-width:1px;border-color:#66ccff;border-radius:' + Math.round(barH / 2) +
       'px;background-color:#66ccff;position:relative;'
 
     // 开发者提示文字

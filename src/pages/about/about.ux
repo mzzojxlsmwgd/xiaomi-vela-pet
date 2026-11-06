@@ -25,6 +25,7 @@
 
 <script>
 import router from '@system.router'
+import device from '@system.device'
 import { TARGET } from '../../config/device-target.js'
 import { GLOW_SRC, glowStyle } from '../../config/theme.js'
 import { CHARACTER } from '../../config/character.js'
@@ -42,31 +43,55 @@ export default {
   },
 
   onInit() {
-    this.apply(TARGET.W, TARGET.H)
+    const self = this
+    this.apply(TARGET.W, TARGET.H)          // 先用写死分辨率兜底
+    // 再用设备真实屏幕精修 —— 手环 10 Pro 是 480×336 横屏，
+    // 按写死的 432×514 算会把页面高度算成 571，下半截全在屏幕外
+    try {
+      device.getInfo({
+        success(ret) {
+          if (ret && ret.screenWidth && ret.screenHeight) {
+            self.apply(ret.screenWidth, ret.screenHeight)
+          }
+        },
+        fail() {}
+      })
+    } catch (e) {}
   },
 
   apply(sw, sh) {
     if (!sw || !sh) return
     const k = DW / sw
     const ch = Math.round(sh * k)
+    // 横屏机型（手环 10 Pro 纵向只有 336）→ 字号和留白一起收紧，让介绍一屏放下
+    const tight = ch < 420
     const btnPhys = Math.min(Math.max(sw * 0.105, 38), 56)
     const btn = Math.round(btnPhys * k)
     const ico = Math.round(btn * 0.5)
-    const fsPhys = Math.min(Math.max(sw * 0.040, 12), 18)
+    const fsPhys = Math.min(Math.max(sw * (tight ? 0.034 : 0.040), 11), 18)
     const fs = Math.round(fsPhys * k)
-    const pad = Math.round(DW * 0.09)
+    const pad = Math.round(DW * (tight ? 0.05 : 0.09))
     const topH = btn + pad
 
     this.sTopbar = 'height:' + topH + 'px;'
-    this.sBtn = 'width:' + btn + 'px;height:' + btn + 'px;border-radius:' + Math.round(btn / 2) + 'px;'
+    this.sBtn = 'width:' + btn + 'px;height:' + btn + 'px;border-width:1px;border-color:rgba(255,255,255,0.13);border-radius:' + Math.round(btn / 2) + 'px;'
     this.sIco = 'width:' + ico + 'px;height:' + ico + 'px;'
-    this.sTitle = 'font-size:' + Math.round(fs * 1.1) + 'px;margin-left:' + Math.round(fs * 0.6) + 'px;'
+    /* 每个 text 都显式给 line-height：不写就用设备默认行高（1.3~1.5 不定），
+       在只有 336 高的横屏上多出来的那几像素就够把最后一行顶出屏幕了 */
+    const titleFs = Math.round(fs * 1.1)
+    const appFs = Math.round(fs * 1.5)
+    const tipFs = Math.round(fs * 0.9)
+    this.sTitle = 'font-size:' + titleFs + 'px;line-height:' + Math.round(titleFs * 1.3) +
+      'px;margin-left:' + Math.round(fs * 0.6) + 'px;'
     this.sBody = 'height:' + (ch - topH) + 'px;'
     this.sGlow = glowStyle(DW * 0.5, topH + (ch - topH) * 0.22, Math.round(DW * 1.2), DW, ch, 0.26)
-    this.sApp = 'font-size:' + Math.round(fs * 1.5) + 'px;margin-bottom:' + Math.round(fs * 0.5) + 'px;'
-    this.sLine = 'font-size:' + fs + 'px;margin-bottom:' + Math.round(fs * 0.45) + 'px;'
-    this.sTip = 'font-size:' + Math.round(fs * 0.9) + 'px;margin-top:' + Math.round(fs * 0.8) + 'px;'
-    this.sGap = 'height:' + Math.round(fs * 1.5) + 'px;'
+    this.sApp = 'font-size:' + appFs + 'px;line-height:' + Math.round(appFs * 1.3) +
+      'px;margin-bottom:' + Math.round(fs * (tight ? 0.3 : 0.5)) + 'px;'
+    this.sLine = 'font-size:' + fs + 'px;line-height:' + Math.round(fs * 1.35) +
+      'px;margin-bottom:' + Math.round(fs * (tight ? 0.28 : 0.45)) + 'px;'
+    this.sTip = 'font-size:' + tipFs + 'px;line-height:' + Math.round(tipFs * 1.35) +
+      'px;margin-top:' + Math.round(fs * (tight ? 0.5 : 0.8)) + 'px;'
+    this.sGap = 'height:' + Math.round(fs * (tight ? 0.9 : 1.5)) + 'px;'
   },
 
   onBack() {

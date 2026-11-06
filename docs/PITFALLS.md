@@ -162,3 +162,69 @@ node tools/check_stories.mjs
 这条是好消息：`<image>` 支持 `object-fit`，所以**任意尺寸、任意比例**的素材都能
 等比缩放塞进容器，不会变形、不会裁切。项目里所有表情/头像都用了它 ——
 这意味着你换素材时**完全不用管原图多大**。
+
+---
+
+## 13. `border-radius` 必须和 `border-width` + `border-color` 写在一起
+
+**这是最容易踩、也最让人怀疑「代码没错啊」的一条。**
+
+官方文档原文：
+
+> `border-radius` 属性允许你设置元素的外边框圆角。**设置时需要同时设置 `border-width`、
+> `border-color`**；单独设置 `border-[left|top|right|bottom]-width`、`-color` 时
+> `border-radius` 无效。
+
+引擎是**解析同一条样式声明**时判断的。所以下面这种写法会失效：
+
+```html
+<!-- ✗ 圆角在 CSS 类里，边框在另一个类里 → 圆角被忽略，元素是直角 -->
+<div class="card" style="border-radius:20px"></div>
+
+<style>
+  .card { background-color: rgba(255,255,255,.06); border-width: 1px; }
+</style>
+```
+
+**正确写法**：三件套紧挨着放在同一个 `style` 里。
+
+```html
+<!-- ✓ -->
+<div style="border-width:1px;border-color:rgba(255,255,255,.14);border-radius:20px"></div>
+```
+
+如果元素**不需要可见边框**，给一个几乎透明的颜色就行，圆角照样生效：
+
+```js
+'border-width:1px;border-color:rgba(255,255,255,0.06);border-radius:' + r + 'px;'
+```
+
+红点、进度条这类元素用**同色边框**（`border-color` = 背景色），
+既出了圆角，视觉尺寸又不变。
+
+**为什么容易漏**：浏览器完全没这条限制，所以 `preview/index.html` 里圆角是好的，
+装到手表上才发现全是方块 —— 会误以为是打包或设备问题。
+
+**自检**：`grep -n border-radius src/pages/*/*.ux`，每一处往前 130 个字符内
+必须同时出现 `border-width` 和 `border-color`。
+
+---
+
+## 14. 同一个样式变量可能被赋值两次
+
+`settings.ux` 的 `sBarIn`（好感度进度条）在 `onInit` 里初始化成 `width:0px`，
+真正生效的是 `loadAffInfo` 里按好感度重算的那一次。改错那一处等于没改。
+
+→ 改样式前先 `grep "sXxx ="` 数一下赋值次数；或者直接看编译产物里那一段字符串。
+
+---
+
+## 15. `<text>` 一定要显式写 `line-height`
+
+不写就用设备默认行高，各平台在 1.3~1.5 之间不等。后果：
+
+- 顶栏三行文字的实际高度比算出来的大 → 返回键被顶出屏幕
+- 固定行高的列表里文字上下被裁
+- 预览（浏览器默认约 1.2）和实机对不上
+
+→ 每个带 `font-size` 的 `text` 都补上 `line-height:字号 × 1.3~1.35`。
