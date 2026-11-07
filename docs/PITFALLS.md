@@ -258,3 +258,57 @@ node tools/check_stories.mjs
 ```js
 const topH = narrow ? (btn + rowGap + affH + pad * 2) : (btn + pad * 2)
 ```
+
+---
+
+## 17. `<text>` 没有 `lines` 属性，行数只能走样式
+
+直觉写法是给标签加属性：
+
+```html
+<text lines="3">…</text>
+```
+
+**编译直接报错**：
+
+```
+Component `text` does not support attribute `lines`.
+The supported attributes are [type, id, style, class, disabled, if, elif, else, for, tid, show, …]
+```
+
+行数只能写进样式（内联或 class 都行），引擎会读：
+
+```js
+this.sChoiceT = 'font-size:' + optFs + 'px;line-height:' + lineH +
+  'px;width:' + innerW + 'px;text-align:center;lines:' + lines + ';'
+```
+
+## 18. 选项框别用 `padding` 定宽，改成内部文字定宽
+
+```js
+// 危险：width + padding 的盒模型各机型不一致
+this.sChoice = 'width:' + optW + 'px;padding-left:' + padH + 'px;padding-right:' + padH + 'px;'
+this.sChoiceT = 'width:' + (optW - padH * 2) + 'px;'
+```
+
+如果引擎把 `width` 当 **content-box**，选项框实际外宽 = `optW + 2*padH`，
+比外层面板还宽 → 左右被裁，文字跟着被裁（表现为「末尾几个字看不见」）。
+
+**改法**：框只定宽，不留 padding；文字自己定宽居中，两种盒模型下都不会溢出：
+
+```js
+this.sChoice = 'width:' + optW + 'px;height:' + optH + 'px;…'
+this.sChoiceT = 'width:' + (optW - padH * 2) + 'px;text-align:center;lines:' + lines + ';'
+```
+
+## 19. 每行字数要按 ≥1.24em 保守估，否则卡在边界会裁字
+
+```js
+const perLine = Math.max(1, Math.floor(innerW / (optFs * 1.24)))
+const lines = Math.min(3, Math.max(1, Math.ceil(maxLen / perLine)))
+const optH = Math.max(minH, lines * lineH + padV * 2 + 4)   // +4 余量防行高误差
+```
+
+中文字宽名义上是 1em，但字体字距 + 标点挤压会让实际占位变宽。
+按 1.16 估时，12 字的长句正好卡在边界：估算 1 行、实际排成 2 行，
+而框高只留了 1 行 → 第二行整行看不见。**宁可多算一行，也不让字被裁。**

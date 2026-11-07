@@ -229,9 +229,11 @@ export default {
     const optGap = Math.round(fs * (tight ? 0.18 : 0.26))
     const boxPad = Math.round(fs * (tight ? 0.28 : 0.36))
     const innerW = optW - optPadH * 2
-    /* 中文字宽约等于 1em，但字体自带的字距会让实际占位更宽 —— 按 1.16 保守估：
-       宁可多算一行留出高度，也不让末尾几个字被裁掉（「过长显示不全」就是这么来的）。 */
-    const perLine = Math.max(1, Math.floor(innerW / (optFs * 1.16)))
+    /* 每行字数按 1.24em 估：中文字宽本身是 1em，但字体字距 + 标点挤压会让实际占位变宽。
+       1.16 时 12 字的长句正好卡在边界 —— 估算 1 行、实际排成 2 行，
+       而框高只留了 1 行 → 第二行被裁掉（「文字显示不全」就是这么来的）。
+       宁可多算一行，也不让字被裁。 */
+    const perLine = Math.max(1, Math.floor(innerW / (optFs * 1.24)))
 
     // 当前这组选项里最长的一条，决定要留几行
     let maxLen = 0
@@ -241,23 +243,28 @@ export default {
     }
     const lines = Math.min(3, Math.max(1, Math.ceil(maxLen / perLine)))
     const lineH = Math.round(optFs * 1.42)
-    // 最小高度 = 2.4 字号（比原来的 2.9 矮一圈），多行时按实际行数撑高；横屏收紧到 2.1
-    const optH = Math.max(Math.round(fs * (tight ? 2.1 : 2.4)), lines * lineH + optPadV * 2)
+    /* 高度 = 行数 × 行高 + 上下内边距 + 4px 余量（设备实际行高可能比 lineH 高一点点）。
+       最小高度降到 2.2 字号：单行的框比之前更紧凑，多行时才按实际行数撑高。 */
+    const optH = Math.max(Math.round(fs * (tight ? 2.0 : 2.2)), lines * lineH + optPadV * 2 + 4)
 
     this.optW = optW
     this.optH = optH
     this.optGap = optGap
     this.boxPad = boxPad
-    this.optLines = lines
 
     this.sChoiceBox = 'width:' + (optW + boxPad * 2) + 'px;padding-top:' + boxPad +
       'px;padding-bottom:' + boxPad + 'px;padding-left:' + boxPad + 'px;padding-right:' + boxPad +
       'px;border-width:1px;border-color:rgba(255,255,255,0.10);border-radius:' + Math.round(optH * 0.5) + 'px;'
+    /* 选项框不再用 padding 留白：改成「框宽固定 + 内部文字定宽」——
+       快应用的 width 到底是 border-box 还是 content-box 各机型不一致，
+       一旦按 content-box 算，加 padding 会把框撑出 choicebox，左右被裁。
+       现在文字自己定宽居中，两种盒模型下都不会溢出。 */
     this.sChoice = 'width:' + optW + 'px;height:' + optH + 'px;border-width:1px;border-color:rgba(255,255,255,0.16);border-radius:' +
-      Math.round(optH / 2) + 'px;margin-bottom:' + optGap + 'px;' +
-      'padding-left:' + optPadH + 'px;padding-right:' + optPadH + 'px;'
+      Math.round(optH / 2) + 'px;margin-bottom:' + optGap + 'px;'
+    /* 行数只能走样式里的 lines —— text 组件没有 lines 属性（写上会编译报错）。
+       这里按每组的实际行数动态写，比 class 里固定的 lines:3 更省地方。 */
     this.sChoiceT = 'font-size:' + optFs + 'px;line-height:' + lineH +
-      'px;width:' + innerW + 'px;text-align:center;'
+      'px;width:' + innerW + 'px;text-align:center;lines:' + lines + ';'
   },
 
   layoutBottom() {
