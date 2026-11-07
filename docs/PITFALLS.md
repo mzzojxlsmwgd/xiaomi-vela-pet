@@ -228,3 +228,33 @@ node tools/check_stories.mjs
 - 预览（浏览器默认约 1.2）和实机对不上
 
 → 每个带 `font-size` 的 `text` 都补上 `line-height:字号 × 1.3~1.35`。
+
+---
+
+## 16. 不要用动态 `class` 去改 `flex-direction`
+
+窄屏（手环 10）主页顶栏要一行变两行，直觉写法是：
+
+```html
+<div class="topbar {{topCls}}" style="{{sTopbar}}">
+```
+
+`topCls` 在 `device.getInfo` 回调里从 `top-row` 改成 `top-col`。
+**问题**：`flex-direction` 决定的是整棵子树的排列方式，Vela 在样式热更新时只重算几何、
+不重建节点，改完经常还是原来的方向（浏览器里完全正常，实机不动）。
+
+**正确写法**：两套结构，用 `if` 二选一。`if` 编译成 `shown()`，切换时是**销毁重建**，
+方向一定跟着变：
+
+```html
+<div class="topbar" if="{{wide}}" style="{{sTopbar}}">…一行版…</div>
+<div class="topbar topbar-col" if="{{narrow}}" style="{{sTopbar}}">…两行版…</div>
+```
+
+模板里别写 `if="{{!narrow}}"` —— 加一个 `wide` 布尔量更稳（省得表达式引擎各版本行为不一）。
+
+**连带注意**：两行的总高要重算进 `topH`，否则下面舞台区会算多、整页溢出：
+
+```js
+const topH = narrow ? (btn + rowGap + affH + pad * 2) : (btn + pad * 2)
+```

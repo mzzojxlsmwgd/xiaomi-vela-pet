@@ -11,8 +11,9 @@
     4) 标题（最长 MAX_TITLE_LEN 字）在 midW 内放得下 —— 这是「标题显示不全」的根因检查
     5) 行高 >= 文字行高 + 上下留白（否则底部被裁）
     6) perPage 行 + 分页条 不超出 body
-  theme.js
-    7) 高斯光斑整体落在画布内（越界会撑出可滑动空白）
+
+v2.9.5 起光斑层已取消（纯黑底），不再校验光斑位置。
+窄屏（<280 宽）主页顶栏是两行：消息按钮一行、时间+好感一行。
 
 用法：python tools/verify_layout.py
 """
@@ -45,18 +46,23 @@ def layout_index(sw, sh):
     fs_phys = clamp(sw * 0.042, 13, 18)
     fs = int(round(fs_phys * k))
     pad = int(round(ch * 0.03))
-    top_h = btn + pad * 2
+    # 窄屏（手环 10）顶部拆两行：第一行消息按钮，第二行时钟+好感
+    narrow = sw < 280
+    aff_h = int(round(fs * 1.5))
+    row_gap = int(round(fs * 0.3))
+    top_h = (btn + row_gap + aff_h + pad * 2) if narrow else (btn + pad * 2)
     bot_h = btn + pad * 2
     gap = int(round(fs * 0.5))
     bubble_h = int(round(min(fs * 2.4, ch * 0.15)))
     stage_h = max(70, ch - top_h - bot_h - bubble_h - gap)
-    em_ratio = 0.42 if sw < 280 else 0.5
-    emoji = int(round(min(cw * em_ratio, stage_h * 0.85)))
+    em_ratio = 0.82 if sw < 280 else 0.5
+    emoji = int(round(min(cw * em_ratio, stage_h * 0.92)))
     card = int(round(emoji * 1.08))
     bubble_w = cw - int(round(cw * 0.16))
     return dict(k=k, cw=cw, ch=ch, btn=btn, fs=fs, pad=pad, top_h=top_h,
                 bot_h=bot_h, gap=gap, bubble_h=bubble_h, stage_h=stage_h,
-                emoji=emoji, card=card, bubble_w=bubble_w)
+                emoji=emoji, card=card, bubble_w=bubble_w,
+                narrow=narrow, aff_h=aff_h, row_gap=row_gap)
 
 
 # ---------------- inbox.ux ----------------
@@ -72,15 +78,19 @@ def layout_inbox(sw, sh):
     body_h = ch - top_h
     pg_h = int(round(fs * 2.6))
 
+    narrow = sw < 280
     pad_v0 = int(round(fs * 0.58))
-    ava0 = min(int(round(fs * 2.2)), int(round(DW * 0.22)))
-    gap_h = max(6, int(round(fs * 0.4)))
+    ava0 = min(int(round(fs * (2.5 if narrow else 2.2))), int(round(DW * 0.24)))
+    gap_h = max(8, int(round(fs * 0.5)))
     avail_h = body_h - pg_h - gap_h
     row_h = max(ava0 + pad_v0 * 2, int(round(fs * 2.4)))
     per_page = int(math.floor(avail_h / float(row_h + gap_h)))
     if per_page < 3:
         row_h = max(int(round(fs * 1.9)), int(math.floor(avail_h / 3.0)) - gap_h)
         per_page = int(math.floor(avail_h / float(row_h + gap_h)))
+    per_page = clamp(per_page, 1, 7)
+    row_cap = int(round(fs * 4.2))
+    row_h = min(row_cap, max(row_h, int(math.floor(avail_h / float(per_page))) - gap_h))
 
     pad_v = min(pad_v0, max(2, int(round(row_h * 0.24))))
     ava = min(ava0, max(1, row_h - pad_v * 2))
@@ -91,16 +101,16 @@ def layout_inbox(sw, sh):
     mid_w = max(40, row_w - row_pad_h * 2 - ava - mid_gap - dot_w)
 
     fit_fs = int(math.floor(mid_w / (MAX_TITLE_LEN * 1.04)))
-    name_fs = max(int(round(fs * 0.82)), min(int(round(fs * 1.06)), fit_fs))
+    name_fs = max(int(round(fs * 0.78)), min(int(round(fs * 1.06)), fit_fs))
     name_lh = int(round(name_fs * 1.34))
     if row_h < name_lh + pad_v * 2:
         row_h = name_lh + pad_v * 2
-        per_page = int(math.floor(avail_h / float(row_h + gap_h)))
-    per_page = clamp(per_page, 1, 10)
+        per_page = clamp(int(math.floor(avail_h / float(row_h + gap_h))), 1, 7)
+    per_page = clamp(per_page, 1, 7)
     return dict(k=k, ch=ch, btn=btn, fs=fs, top_h=top_h, body_h=body_h, pg_h=pg_h,
                 pad_v=pad_v, ava=ava, gap_h=gap_h, row_h=row_h, row_w=row_w,
                 row_pad_h=row_pad_h, mid_w=mid_w, name_fs=name_fs,
-                name_lh=name_lh, per_page=per_page, dot_w=dot_w)
+                name_lh=name_lh, per_page=per_page, dot_w=dot_w, narrow=narrow)
 
 
 # ---------------- 通用几何 ----------------
@@ -158,15 +168,29 @@ def main():
         if total != H:
             problems.append("高度合计 %d != 画布 %d" % (total, H))
 
-        # 顶部：信息钮 + 时钟 + 好感胶囊，整组水平居中
+        # 顶部：宽屏一行（信息钮 + 时钟 + 好感胶囊）；窄屏两行（按钮一行，时间+好感一行）
         clock_w = int(round(5 * 0.56 * L["fs"] * 1.15))
-        gap = int(round(L["fs"] * 0.7))
         aff_w = int(round(L["fs"] * 4.2))
-        group_w = L["btn"] + gap + clock_w + gap + aff_w
-        gx = (W - group_w) / 2.0
-        ok, why = rect_ok(gx, L["pad"], gx + L["btn"], L["pad"] + L["btn"], W, H, r_css)
-        if not ok:
-            problems.append("顶部信息钮 %s" % why)
+        if L["narrow"]:
+            # 第一行：消息按钮居中
+            bx = (W - L["btn"]) / 2.0
+            ok, why = rect_ok(bx, L["pad"], bx + L["btn"], L["pad"] + L["btn"], W, H, r_css)
+            if not ok:
+                problems.append("顶部信息钮 %s" % why)
+            # 第二行：时钟 + 好感胶囊居中
+            row2_w = clock_w + int(round(L["fs"] * 0.5)) + aff_w
+            rx = (W - row2_w) / 2.0
+            ry = L["pad"] + L["btn"] + L["row_gap"]
+            ok, why = rect_ok(rx, ry, rx + row2_w, ry + L["aff_h"], W, H, r_css)
+            if not ok:
+                problems.append("顶部时间好感行 %s" % why)
+        else:
+            gap = int(round(L["fs"] * 0.7))
+            group_w = L["btn"] + gap + clock_w + gap + aff_w
+            gx = (W - group_w) / 2.0
+            ok, why = rect_ok(gx, L["pad"], gx + L["btn"], L["pad"] + L["btn"], W, H, r_css)
+            if not ok:
+                problems.append("顶部信息钮 %s" % why)
 
         # 底部：设置钮居中
         bx = (W - L["btn"]) / 2.0
@@ -197,8 +221,10 @@ def main():
 
         emoji_phys = L["emoji"] / k
         ratio = emoji_phys / min(sw, sh)
-        if ratio < 0.36:
-            problems.append("表情包偏小（短边 %d%%）" % round(ratio * 100))
+        # 窄屏（手环 10）要求表情占短边 70% 以上 —— v2.9.4 专门放大过
+        floor_ratio = 0.70 if sw < 280 else 0.36
+        if ratio < floor_ratio:
+            problems.append("表情包偏小（短边 %d%% < %d%%）" % (round(ratio * 100), round(floor_ratio * 100)))
 
         print("%-16s %-11s %-5d %-6d %-6.1f %-7.0f %-8s %s" % (
             name, "%dx%d" % (sw, sh), r, round(L["btn"] / k), L["fs"] / k, emoji_phys,
@@ -247,19 +273,9 @@ def main():
         if problems:
             ok_all = False
 
-    # ---------------- 光斑 ----------------
+    # ---------------- 光斑（v2.9.5 已取消，不再有装饰层） ----------------
     print()
-    for name, sw, sh, r in DEVICES:
-        k = DW / float(sw)
-        cw, ch = DW, int(round(sh * k))
-        for tag, cx, cy, d in (("主光斑", cw * 0.30, ch * 0.24, int(round(cw * 1.5))),
-                               ("副光斑", cw * 0.76, ch * 0.82, int(round(cw * 1.1)))):
-            x0, y0, x1, y1 = glow_box(cx, cy, d, cw, ch)
-            if x0 < 0 or y0 < 0 or x1 > cw or y1 > ch:
-                print("!! %s %s 越界 (%.0f,%.0f)-(%.0f,%.0f) 画布 %dx%d" %
-                      (name, tag, x0, y0, x1, y1, cw, ch))
-                ok_all = False
-    print("高斯光斑：全部夹在画布内")
+    print("装饰层：已取消高斯光斑（纯黑底），无溢出风险")
 
     print()
     print("画布基准 designWidth = %d（CSS px）" % DW)

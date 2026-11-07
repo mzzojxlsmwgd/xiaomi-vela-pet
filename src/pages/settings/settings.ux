@@ -1,8 +1,5 @@
 <template>
   <div class="page">
-    <!-- 黑色毛玻璃底：高斯光斑（模糊已烘进 PNG，位置夹在画布内） -->
-    <image class="glow" src="{{glowSrc}}" style="{{sGlow}}" />
-
     <div class="topbar" style="{{sTopbar}}">
       <div class="btn" style="{{sBtn}}" onclick="onBack">
         <image class="ico" src="/common/img/ic_back.png" style="{{sIco}}" />
@@ -45,7 +42,6 @@ import router from '@system.router'
 import device from '@system.device'
 import { TARGET } from '../../config/device-target.js'
 import { loadAff, levelOf, effAff, isDev, setDev, resetAff, DEV_MODE_ENABLED } from '../../config/affinity.js'
-import { GLOW_SRC, glowStyle } from '../../config/theme.js'
 import { CHARACTER } from '../../config/character.js'
 
 const DW = 480
@@ -59,7 +55,6 @@ export default {
     affLine: 'Lv.1 初识 · 0',
     affHint: '',
     sTopbar: '', sBtn: '', sIco: '', sTitle: '',
-    sGlow: '', glowSrc: GLOW_SRC,
     sBody: '', sRow: '', sK: '', sV: '',
     sAffBox: '', sAffT: '', sAffH: '', sBarBg: '', sBarIn: '', sDevHint: '',
     barW: 300, barH: 10
@@ -183,7 +178,6 @@ export default {
       'px;margin-left:' + Math.round(fs * 0.6) + 'px;'
     this.sBody = 'height:' + bodyH + 'px;padding-top:' + Math.round(fs * 0.3) +
       'px;padding-bottom:' + bottomPad + 'px;'
-    this.sGlow = glowStyle(DW * 0.5, topH + bodyH * 0.2, Math.round(DW * 1.3), DW, ch, 0.30)
 
     this.sRow = 'width:' + rowW + 'px;height:' + rowH + 'px;margin-bottom:' + gap +
       'px;padding-left:' + Math.round(fs * 0.9) + 'px;padding-right:' + Math.round(fs * 0.9) +
@@ -234,12 +228,6 @@ export default {
     flex-direction: column;
     align-items: center;
     background-color: #000000;
-  }
-
-  /* 高斯光斑：模糊已烘进 PNG，这里只负责摆放与调暗 */
-  .glow {
-    position: absolute;
-    object-fit: contain;
   }
 
   .topbar {

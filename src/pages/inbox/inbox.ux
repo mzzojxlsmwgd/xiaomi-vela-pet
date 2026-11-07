@@ -1,8 +1,5 @@
 <template>
   <div class="page" style="{{sPage}}">
-    <!-- 黑色毛玻璃底：高斯光斑（模糊已烘进 PNG，位置夹在画布内） -->
-    <image class="glow" src="{{glowSrc}}" style="{{sGlow}}" />
-
     <div class="topbar" style="{{sTopbar}}">
       <div class="btn" style="{{sBtn}}" onclick="onBack">
         <image class="ico" src="/common/img/ic_back.png" style="{{sIco}}" />
@@ -59,7 +56,6 @@ import { loadAff, levelOf, effAff, isDev } from '../../config/affinity.js'
 import { dateLabel, shortDate } from '../../config/dates.js'
 import { MAX_TITLE_LEN } from '../../config/story-meta.js'
 import { CHARACTER } from '../../config/character.js'
-import { GLOW_SRC, glowStyle } from '../../config/theme.js'
 
 const DW = 480
 
@@ -77,7 +73,7 @@ export default {
     dateText: '',
     affText: 'Lv.1 0',
     affCls: 'aff-lo',
-    sPage: '', sGlow: '', glowSrc: GLOW_SRC,
+    sPage: '',
     sTopbar: '', sBtn: '', sIco: '', sTitle: '', sDate: '',
     sRight: '', sAff: '',
     sBody: '', sRow: '', sAva: '', sAvaImg: '', sMid: '', sName: '',
@@ -175,7 +171,6 @@ export default {
     this.perPage = perPage
 
     this.sPage = 'width:' + DW + 'px;height:' + ch + 'px;position:absolute;left:0;top:0;overflow:hidden;'
-    this.sGlow = glowStyle(DW * 0.5, topH + bodyH * 0.24, Math.round(DW * 1.4), DW, ch, 0.34)
     this.sTopbar = 'height:' + topH + 'px;padding-left:' + Math.round(DW * 0.06) +
       'px;padding-right:' + Math.round(DW * 0.06) + 'px;'
     this.sBtn = 'width:' + btn + 'px;height:' + btn + 'px;border-width:1px;border-color:rgba(255,255,255,0.13);border-radius:' + Math.round(btn / 2) + 'px;'
@@ -315,12 +310,6 @@ export default {
     flex-direction: column;
     align-items: center;
     background-color: #000000;
-  }
-
-  /* 高斯光斑：模糊已烘进 PNG，这里只负责摆放与调暗 */
-  .glow {
-    position: absolute;
-    object-fit: contain;
   }
 
   .topbar {

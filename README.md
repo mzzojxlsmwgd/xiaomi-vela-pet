@@ -79,7 +79,7 @@ src/
 │   ├── affinity.js        好感度规则与等级表
 │   ├── inbox.js           消息触发、排序、已读
 │   ├── dates.js           节日 / 星期 / 农历判断
-│   ├── theme.js           配色与光斑
+│   ├── theme.js           配色（光斑工具函数保留，默认不启用）
 │   ├── store.js           storage 安全读写（别绕过它）
 │   ├── build-mode.js      正式版/开发者版（自动生成）
 │   ├── device-target.js   目标机型分辨率（自动生成）
@@ -92,7 +92,7 @@ src/
 │   └── about/             关于
 └── common/
     ├── emoji/             表情图 <名字>_<帧号>.png
-    └── img/               图标与光斑
+    └── img/               图标（光斑图可选，默认不用）
 
 tools/                     辅助脚本（见下方）
 docs/                      详细文档
@@ -249,7 +249,8 @@ Python 脚本需要 Pillow（`pip install pillow`）。
 ## 已知限制
 
 - **只支持手表类设备**（`deviceTypeList: ["watch"]`），没做手机版布局
-- Vela 不支持 `backdrop-filter` 和 `linear-gradient`，毛玻璃效果是把模糊**预烘进 PNG** 实现的
+- Vela 不支持 `backdrop-filter` 和 `linear-gradient`；毛玻璃只能靠「预烘模糊的 PNG + 半透明白面板」模拟，
+  实机上这层模糊很容易糊成一片灰，所以**默认不放光斑**（纯黑底），`theme.js` 里的 `glowStyle()` 留着给想用的人
 - 农历节日用一张小表按年份查（默认只收录 2026、2027），表里没有的年份会自动跳过
 - 表情动画靠 `setInterval` 逐帧换图，帧数越多越吃 CPU，建议 ≤ 12 帧
 

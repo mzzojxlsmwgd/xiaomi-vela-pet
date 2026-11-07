@@ -1,8 +1,5 @@
 <template>
   <div class="page">
-    <!-- 黑色毛玻璃底：高斯光斑（模糊已烘进 PNG，位置夹在画布内） -->
-    <image class="glow" src="{{glowSrc}}" style="{{sGlow}}" />
-
     <div class="topbar" style="{{sTopbar}}">
       <div class="btn" style="{{sBtn}}" onclick="onBack">
         <image class="ico" src="/common/img/ic_back.png" style="{{sIco}}" />
@@ -27,7 +24,6 @@
 import router from '@system.router'
 import device from '@system.device'
 import { TARGET } from '../../config/device-target.js'
-import { GLOW_SRC, glowStyle } from '../../config/theme.js'
 import { CHARACTER } from '../../config/character.js'
 
 const DW = 480
@@ -38,7 +34,6 @@ export default {
     appName: CHARACTER.appName,
     tagline: CHARACTER.tagline,
     sTopbar: '', sBtn: '', sIco: '', sTitle: '',
-    sGlow: '', glowSrc: GLOW_SRC,
     sBody: '', sApp: '', sLine: '', sTip: '', sGap: ''
   },
 
@@ -84,7 +79,6 @@ export default {
     this.sTitle = 'font-size:' + titleFs + 'px;line-height:' + Math.round(titleFs * 1.3) +
       'px;margin-left:' + Math.round(fs * 0.6) + 'px;'
     this.sBody = 'height:' + (ch - topH) + 'px;'
-    this.sGlow = glowStyle(DW * 0.5, topH + (ch - topH) * 0.22, Math.round(DW * 1.2), DW, ch, 0.26)
     this.sApp = 'font-size:' + appFs + 'px;line-height:' + Math.round(appFs * 1.3) +
       'px;margin-bottom:' + Math.round(fs * (tight ? 0.3 : 0.5)) + 'px;'
     this.sLine = 'font-size:' + fs + 'px;line-height:' + Math.round(fs * 1.35) +
@@ -110,12 +104,6 @@ export default {
     flex-direction: column;
     align-items: center;
     background-color: #000000;
-  }
-
-  /* 高斯光斑：模糊已烘进 PNG，这里只负责摆放与调暗 */
-  .glow {
-    position: absolute;
-    object-fit: contain;
   }
 
   .topbar {
