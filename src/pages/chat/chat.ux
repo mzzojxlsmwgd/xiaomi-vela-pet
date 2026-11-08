@@ -143,6 +143,9 @@ export default {
     this.ch = ch
     this.topH = topH
     this.fs = fs
+    /* 窄屏（手环 10）屏幕底部圆角很大，选项框 / 结算块 / 「正在输入」贴着底边都会被圆弧削掉 ——
+       整块往上抬一点，把圆角的高度让出来。 */
+    this.lift = sw < 280 ? Math.round(fs * 1.8) : 0
     this.lineH = Math.round(fs * 1.38)
     this.padV = Math.round(fs * 0.42)
     this.padH = Math.round(fs * 0.6)
@@ -174,7 +177,8 @@ export default {
       Math.round(fs * 0.5) + 'px;margin-bottom:' + Math.round(fs * 0.3) + 'px;'
 
     const typingFs = Math.round(fs * 0.82)
-    this.sTyping = 'font-size:' + typingFs + 'px;line-height:' + Math.round(typingFs * 1.35) + 'px;'
+    this.sTyping = 'font-size:' + typingFs + 'px;line-height:' + Math.round(typingFs * 1.35) +
+      'px;margin-bottom:' + (this.lift || 0) + 'px;'
 
     /* 选项框：外面套一层大圆角玻璃面板，里面每个选项是胶囊。
        具体高度按「最长那条文字要不要折行」算，见 layoutChoices()。 */
@@ -197,20 +201,22 @@ export default {
   },
 
   bottomHeight(fs) {
+    // 底部内容整体上抬的量（窄屏才有），高度也要跟着算进去，否则内容会溢出
+    const lift = this.lift || 0
     if (this.phase === 'choices') {
       const n = this.choices.length || 2
       const optH = this.optH || Math.round(fs * 2.9)
       const optGap = this.optGap || Math.round(fs * 0.32)
       const boxPad = this.boxPad || Math.round(fs * 0.5)
       // 圆角面板上下各 boxPad，里面 n 个选项（含各自的下间距）
-      return boxPad * 2 + n * (optH + optGap) + Math.round(fs * 0.3)
+      return lift + boxPad * 2 + n * (optH + optGap) + Math.round(fs * 0.3)
     }
     if (this.phase === 'end') {
       // 结算只显示好感增加量 + 两个按钮（结局名不再显示）
-      return Math.round(fs * 0.78) + Math.round(fs * 0.4) +
+      return lift + Math.round(fs * 0.78) + Math.round(fs * 0.4) +
         Math.round(fs * 2.5) + Math.round(fs * 1.2)
     }
-    return Math.round(fs * 2.6)
+    return lift + Math.round(fs * 2.6)
   },
 
   /* 选项框：宽度固定，高度按最长那条文字决定要几行 ——
@@ -249,7 +255,8 @@ export default {
 
     this.sChoiceBox = 'width:' + (optW + boxPad * 2) + 'px;padding-top:' + boxPad +
       'px;padding-bottom:' + boxPad + 'px;padding-left:' + boxPad + 'px;padding-right:' + boxPad +
-      'px;border-width:1px;border-color:rgba(255,255,255,0.10);border-radius:' + Math.round(optH * 0.5) + 'px;'
+      'px;border-width:1px;border-color:rgba(255,255,255,0.10);border-radius:' + Math.round(optH * 0.5) +
+      'px;margin-bottom:' + (this.lift || 0) + 'px;'
     /* 选项框不用 padding 留白：改成「框宽固定 + 内部文字定宽」——
        快应用的 width 到底是 border-box 还是 content-box 各机型不一致，
        加 padding 会把框撑出 choicebox，左右被裁。 */
@@ -266,7 +273,7 @@ export default {
     this.msgAreaH = Math.max(40, this.ch - this.topH - bottomH)
     this.sBottom = 'height:' + bottomH + 'px;width:' + DW + 'px;'
     this.sMsgWrap = 'height:' + this.msgAreaH + 'px;width:' + DW + 'px;'
-    this.sEndWrap = 'width:' + DW + 'px;'
+    this.sEndWrap = 'width:' + DW + 'px;margin-bottom:' + (this.lift || 0) + 'px;'
   },
 
   /* ---------------- 剧情 ---------------- */
