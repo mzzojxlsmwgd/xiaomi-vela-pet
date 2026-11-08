@@ -207,7 +207,10 @@ export default {
       return boxPad * 2 + n * (optH + optGap) + Math.round(fs * 0.3)
     }
     if (this.phase === 'end') {
-      return Math.round(fs * 0.86) + Math.round(fs * 0.4) + Math.round(fs * 0.78) +
+      /* 窄屏（手环 10）屏幕本来就矮，结算内容贴着底边看着往下坠 ——
+         整体上移一个字号多的高度，上面留白、下面也留白。 */
+      const lift = this.sw < 280 ? Math.round(fs * 1.6) : 0
+      return lift + Math.round(fs * 0.86) + Math.round(fs * 0.4) + Math.round(fs * 0.78) +
         Math.round(fs * 0.4) + Math.round(fs * 2.5) + Math.round(fs * 1.2)
     }
     return Math.round(fs * 2.6)
@@ -224,11 +227,13 @@ export default {
   layoutChoices() {
     const fs = this.fs
     const optW = Math.round(DW * 0.76)
-    const optFs = Math.max(11, Math.round(fs * 0.82))
     /* 横屏机型（手环 10 Pro 只有 336 高）如果选项还按大字撑，消息区就只剩几十像素 ——
        整块挤在一起。这里把高度和间距一起收紧，换回一百多像素的消息区。 */
     const tight = this.ch < 420
     const narrow = this.sw < 280
+    /* 窄屏（手环 10，212 宽）框窄，0.82 字号一行只放得下几个字、长句断得难看 →
+       收到 0.70，一行能多放两三个字，两行框里的折行也顺眼些。 */
+    const optFs = Math.max(11, Math.round(fs * (narrow ? 0.70 : 0.82)))
     const optPadV = Math.round(fs * (tight ? 0.34 : 0.46))
     const optGap = Math.round(fs * (tight ? 0.18 : 0.26))
     const boxPad = Math.round(fs * (tight ? 0.28 : 0.36))
@@ -288,7 +293,9 @@ export default {
     this.msgAreaH = Math.max(40, this.ch - this.topH - bottomH)
     this.sBottom = 'height:' + bottomH + 'px;width:' + DW + 'px;'
     this.sMsgWrap = 'height:' + this.msgAreaH + 'px;width:' + DW + 'px;'
-    this.sEndWrap = 'width:' + DW + 'px;'
+    // 结算块整体上移（高度已经算进 bottomHeight，这里用 margin 把内容顶上去）
+    const lift = (this.phase === 'end' && this.sw < 280) ? Math.round(this.fs * 1.6) : 0
+    this.sEndWrap = 'width:' + DW + 'px;margin-bottom:' + lift + 'px;'
   },
 
   /* ---------------- 剧情 ---------------- */
