@@ -312,3 +312,49 @@ const optH = Math.max(minH, lines * lineH + padV * 2 + 4)   // +4 余量防行�
 中文字宽名义上是 1em，但字体字距 + 标点挤压会让实际占位变宽。
 按 1.16 估时，12 字的长句正好卡在边界：估算 1 行、实际排成 2 行，
 而框高只留了 1 行 → 第二行整行看不见。**宁可多算一行，也不让字被裁。**
+
+---
+
+## 20. 胶囊圆角会削文字：文字宽度要收进「直线段」
+
+选项框是胶囊（`border-radius: optH/2`）。圆角半径 = 半个高度，所以**左右各 optH/2
+的范围是圆弧区**，那里可显示高度从中间向两端迅速收敛到 0。
+
+文字如果横铺到圆弧区，首尾几个字就被上下削掉 —— 表现为「字被切了一半」，
+而且**框加高反而更糟**（半径跟着变大，圆弧区更宽）。
+
+**正确做法**：文字宽度收进直线段，并留一点抗锯齿余量：
+
+```js
+// 左右各留 optH/2 的圆角区 + 0.4 字号余量
+innerW = optW - optH - Math.round(fs * 0.4)
+```
+
+注意这和「文字太长要折行」是**两个独立问题**，别混在一起调：
+
+| 问题 | 症状 | 解法 |
+|------|------|------|
+| 文字过长 | 一行放不下，第二行看不到 | 按行数给高度（窄屏 >5 字直接给两行） |
+| 胶囊圆角 | 首尾字上下被切、字脚被压 | 收窄文字宽度 + 整体上移 |
+
+**整体上移**：胶囊下沿收得比上沿急，`justify-content: center` 居中摆放时字脚容易
+压到弧线。给文字加一点 `margin-bottom`（约 0.24 字号），flex 居中会把内容上推半个值。
+
+```js
+this.sChoiceT = '…;lines:' + lines + ';margin-bottom:' + Math.round(fs * 0.24) + 'px;'
+```
+
+**高度和宽度互相咬合**（框越高 → 半径越大 → 直线段越短），要迭代两轮才收敛：
+
+```js
+let optH = minH, innerW = optW, lines = 1
+for (let round = 0; round < 3; round++) {
+  innerW = optW - optH - Math.round(fs * 0.4)
+  const perLine = Math.max(1, Math.floor(innerW / (optFs * 1.24)))
+  lines = Math.min(3, Math.max(1, Math.ceil(maxLen / perLine)))
+  if (narrow && maxLen > 5) lines = Math.max(lines, 2)   // 窄屏超过 5 字必折行
+  const h = Math.max(minH, lines * lineH + optPadV * 2 + 4)
+  if (h === optH) break
+  optH = h
+}
+```
