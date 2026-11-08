@@ -63,30 +63,35 @@ def icon_set():
 
 
 def icon_app():
-    """应用图标：和占位表情同款的简笔笑脸（换成自己的美术时直接覆盖 icon.png）"""
+    """应用图标：和占位表情同款的简笔笑脸（换成自己的美术时直接覆盖 icon.png）
+
+    底是**正圆**不是圆角矩形 —— 手表桌面图标位是圆形遮罩，方角会被切掉。
+    内圈按「脸 46 + 三道环 57/65/75」排，最外环占圆底 78%，留 21% 边距；
+    这个比例是从原来的圆角矩形版等比缩下来的（脸 52 / 环 64·74·84），只缩小不改形。
+    """
     n = 192
     im = canvas(n)
     d = ImageDraw.Draw(im)
-    # 圆角底
-    d.rounded_rectangle([0, 0, n * S - 1, n * S - 1], radius=44 * S, fill=(9, 20, 31, 255))
+    # 圆形底
+    d.ellipse([0, 0, n * S - 1, n * S - 1], fill=(9, 20, 31, 255))
     # 光晕环
-    for rr, a in [(84, 20), (74, 34), (64, 50)]:
+    for rr, a in [(75, 20), (65, 34), (57, 50)]:
         r = rr * S
         c = n * S / 2.0
         d.ellipse([c - r, c - r, c + r, c + r], outline=(102, 204, 255, a), width=int(2 * S))
     # 脸
     c = n * S / 2.0
-    fr = 52 * S
+    fr = 46 * S
     d.ellipse([c - fr, c - fr, c + fr, c + fr], fill=(242, 244, 247, 255))
     # 弯眼睛
-    ew, eh = 11 * S, 9 * S
-    for dx in (-16 * S, 16 * S):
-        d.arc([c + dx - ew, c - 12 * S - eh, c + dx + ew, c - 12 * S + eh],
-              200, 340, fill=(43, 47, 54, 255), width=int(3.2 * S))
+    ew, eh = 10 * S, 8 * S
+    for dx in (-14 * S, 14 * S):
+        d.arc([c + dx - ew, c - 11 * S - eh, c + dx + ew, c - 11 * S + eh],
+              200, 340, fill=(43, 47, 54, 255), width=int(3 * S))
     # 笑嘴
-    mw, mh = 18 * S, 14 * S
+    mw, mh = 16 * S, 12.5 * S
     d.arc([c - mw, c + 2 * S - mh, c + mw, c + 2 * S + mh],
-          20, 160, fill=(43, 47, 54, 255), width=int(3.2 * S))
+          20, 160, fill=(43, 47, 54, 255), width=int(3 * S))
     small = im.resize((n, n), Image.LANCZOS)
     small.quantize(colors=32, method=Image.FASTOCTREE).save(
         os.path.join(IMG, "icon.png"), optimize=True)

@@ -5,6 +5,10 @@
 
 [![Vela](https://img.shields.io/badge/platform-Xiaomi%20Vela-66ccff)](https://iot.mi.com/vela)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![version](https://img.shields.io/badge/version-1.0.0-66ccff)](CHANGELOG.md)
+
+> **状态**：v1.0.0 可直接发行。骨架、素材、文档、校验、CI 都已就位，
+> 换掉 `src/config/` 里的角色、台词、剧情和 `src/common/emoji/` 里的图，就是你的应用。
 
 ---
 
@@ -39,7 +43,7 @@
 - **双版本**：正式版 / 开发者版包名不同，可以同时装、存档互不干扰
 - **零依赖运行**：不联网、不上报，所有数据只存在手表的 storage 里
 
-包体积约 **124 KB**（含 12 张表情占位图）。
+包体积约 **118 KB**（含 12 张表情占位图）。
 
 ---
 
@@ -57,10 +61,18 @@ npm run build          # 产物：dist/com.example.velapet.debug.1.0.0.rpk
 #    或者用 aiot-toolkit 的 debug 命令推到已连接的表上
 ```
 
-环境要求：Node.js ≥ 8.10（推荐 18/20/22）。工具链会自动处理 `.ux` 文件的编译。
+环境要求：Node.js ≥ 18.19（推荐 20 / 22），Python 3 + Pillow 只在跑素材/校验脚本时需要。
+
+> 只跑 `npm run build` 的话更老的 Node 也能用；`npm test` 需要 18.19+（它用了 `module.register()`）。
 
 > 首次 `npm run build` 会有几条 `Label img must be closed` 的警告 ——
 > Vela 的模板解析器对自闭合标签比较敏感，不影响产物，可以忽略。
+
+### 改完代码先跑一遍校验
+
+```bash
+npm run verify     # = 冒烟测试 + 剧情图校验 + 布局几何复算，全过再打包
+```
 
 ---
 
@@ -226,6 +238,23 @@ python tools/build_models.py     # 产物在 packages/
 `sign/` 已在 `.gitignore` 里。**换密钥 = 手表会当成另一个应用，老存档不会迁移**，
 同一个包名 + 同一把密钥才认作同一个应用。
 
+### 发行前检查清单
+
+把自己的角色做完、准备发第一个版本时，逐条对一遍：
+
+- [ ] `src/manifest.json` 的 `package` 换成自己的反域名（`com.yourname.xxx`），**装上表之后就不要再改**
+- [ ] `src/manifest.json` 的 `name` / `versionName` / `versionCode` 改好（`versionCode` 每发一版必须 +1）
+- [ ] `src/config/character.js` 的 `name` / `appName` / `tagline` / `avatar` / `birthday` / `finale` 都填了
+- [ ] `src/common/img/icon.png` 换成自己的图标（**192×192 正圆**，方角会被手表的圆形遮罩切掉）
+- [ ] `src/common/emoji/` 的占位图全部替换，`emoji.js` 的 `EMOJI` 清单同步
+- [ ] `npm run verify` 三项全过
+- [ ] `python tools/build_models.py` 五个包都出得来
+- [ ] `packages/` 里的包挨个装到对应机型上，跑一遍主页 / 消息 / 聊天 / 设置 / 关于
+- [ ] 存档回归：好感度点一下、退出重进还是那个数（这条最容易翻车，见 `docs/PITFALLS.md` 存储那一节）
+- [ ] `sign/` **没有**提交进仓库
+
+> `versionCode` 只增不减。同一个 `versionCode` 的包重复安装，手表会拒绝或者当成覆盖失败。
+
 ---
 
 ## 工具脚本
@@ -244,6 +273,9 @@ python tools/build_models.py     # 产物在 packages/
 
 Python 脚本需要 Pillow（`pip install pillow`）。
 
+`npm run verify` 会依次跑冒烟测试、剧情图校验、布局复算 —— 提交前跑一次就行，
+GitHub Actions 的 `verify` workflow 也是同样三步（不装依赖，十几秒出结果）。
+
 ---
 
 ## 已知限制
@@ -258,6 +290,7 @@ Python 脚本需要 Pillow（`pip install pillow`）。
 
 ## 文档
 
+- [CHANGELOG.md](CHANGELOG.md) —— 版本变更记录
 - [docs/ASSETS.md](docs/ASSETS.md) —— 素材制作规范（尺寸、帧、透明、体积）
 - [docs/CUSTOMIZE.md](docs/CUSTOMIZE.md) —— 逐文件改造指南
 - [docs/PITFALLS.md](docs/PITFALLS.md) —— **Vela 踩坑清单，改代码前先看这个**

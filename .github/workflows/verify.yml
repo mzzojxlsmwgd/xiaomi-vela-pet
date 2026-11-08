@@ -1,0 +1,36 @@
+name: verify
+
+# 三项校验都不依赖 node_modules —— smoke_test 用 Node loader hook 把 @system.storage
+# 重定向到内存实现，check_stories 只读源码，verify_layout 是纯 Python。
+# 所以这里故意不跑 npm install，CI 十几秒就能出结果。
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 逻辑冒烟测试（42 项断言）
+        run: node tools/smoke_test.mjs
+
+      - name: 剧情图校验（断链 / 死循环 / 不可达分支）
+        run: node tools/check_stories.mjs
+
+      - name: 布局几何复算（四机型）
+        run: python3 tools/verify_layout.py
+
+      - name: 检查 story-meta 是否与 stories.js 同步
+        run: |
+          cp src/config/story-meta.js /tmp/story-meta.before.js
+          node tools/gen_story_meta.mjs
+          diff -u /tmp/story-meta.before.js src/config/story-meta.js \
+            || (echo "::error::story-meta.js 与 stories.js 不一致，本地跑一次 node tools/gen_story_meta.mjs 并提交" && exit 1)

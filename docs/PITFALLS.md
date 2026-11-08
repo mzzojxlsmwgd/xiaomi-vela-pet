@@ -315,46 +315,87 @@ const optH = Math.max(minH, lines * lineH + padV * 2 + 4)   // +4 余量防行�
 
 ---
 
-## 20. 胶囊圆角会削文字：文字宽度要收进「直线段」
+## 20. 胶囊圆角会削文字 —— 但别用「收窄文字宽度」去躲
 
 选项框是胶囊（`border-radius: optH/2`）。圆角半径 = 半个高度，所以**左右各 optH/2
-的范围是圆弧区**，那里可显示高度从中间向两端迅速收敛到 0。
+的范围是圆弧区**，那里可显示高度从中间向两端迅速收敛到 0。文字如果伸进圆弧区，
+首尾几个字会被上下削掉，表现为「字被切了一半」。
 
-文字如果横铺到圆弧区，首尾几个字就被上下削掉 —— 表现为「字被切了一半」，
-而且**框加高反而更糟**（半径跟着变大，圆弧区更宽）。
+**这里踩过一次大坑，记下来免得重走**：
 
-**正确做法**：文字宽度收进直线段，并留一点抗锯齿余量：
+v2.9.7 试过「把文字宽度收进直线段」——`innerW = optW - optH - 0.4fs`。
+结果框越高半径越大、能放字的宽度越窄，`optH` 和 `innerW` 互相咬合，
+必须迭代两三轮到收敛才稳定；而且宽度收得太狠，12 字的长句反而被挤成三行。
+v2.9.8 又叠了「窄屏字号 0.70」，视觉上字小得难看。
+**v2.9.9 把这些全部回退**，换了个思路：
+
+> 文字是**单行或两三行、垂直居中**的。只要上下内边距（`optPadV`）足够，
+> 字形根本够不到圆弧区 —— 圆弧只在靠近上下边缘的地方才有收敛。
+> 所以正确做法不是收窄宽度，而是**留够上下留白 + 字号别太大**。
+
+现在的写法（`chat.ux` 的 `layoutChoices()`）：
 
 ```js
-// 左右各留 optH/2 的圆角区 + 0.4 字号余量
-innerW = optW - optH - Math.round(fs * 0.4)
+const optW    = Math.round(DW * 0.76)
+const optFs   = Math.max(11, Math.round(fs * 0.76))
+const optPadH = Math.round(fs * 0.42)
+const optPadV = Math.round(fs * (tight ? 0.34 : 0.46))
+const innerW  = optW - optPadH * 2                 // 只扣左右内边距，不扣 optH
+const perLine = Math.floor(innerW / (optFs * 1.24))
+const lines   = Math.min(3, Math.ceil(maxLen / perLine))
+const optH    = Math.max(Math.round(fs * 2.2), lines * lineH + optPadV * 2 + 4)
 ```
 
-注意这和「文字太长要折行」是**两个独立问题**，别混在一起调：
+验算（手环 10：`fs = 27` 设计px）：`optW = 365`、`optH = 59`（单行）、半径 29.5、
+文字行高 29 居中后上下各留 15px。在文字左端 `x = 18.5` 处圆弧的可用高度还有 54.8px，
+文字只占 29px —— **绰绰有余**。两行、三行同理。
+
+### 两个问题别混在一起调
 
 | 问题 | 症状 | 解法 |
 |------|------|------|
-| 文字过长 | 一行放不下，第二行看不到 | 按行数给高度（窄屏 >5 字直接给两行） |
-| 胶囊圆角 | 首尾字上下被切、字脚被压 | 收窄文字宽度 + 整体上移 |
+| 文字过长 | 一行放不下，第二行整行看不到 | 按最长那条算行数，把高度给够（系数用 1.24em 保守估） |
+| 胶囊圆角 | 首尾字上下被切、字脚被压 | 留够 `optPadV` + 字号别顶满；**不要收窄 `innerW`** |
 
-**整体上移**：胶囊下沿收得比上沿急，`justify-content: center` 居中摆放时字脚容易
-压到弧线。给文字加一点 `margin-bottom`（约 0.24 字号），flex 居中会把内容上推半个值。
+### 还有一种「圆角」不是控件的圆角
 
-```js
-this.sChoiceT = '…;lines:' + lines + ';margin-bottom:' + Math.round(fs * 0.24) + 'px;'
-```
-
-**高度和宽度互相咬合**（框越高 → 半径越大 → 直线段越短），要迭代两轮才收敛：
+手环 10 的**屏幕**圆角半径 46 物理px。贴底的选项框 / 结算块 /「正在输入」
+会落进屏幕圆弧里被切。这个只能靠 `margin-bottom` 整体上抬：
 
 ```js
-let optH = minH, innerW = optW, lines = 1
-for (let round = 0; round < 3; round++) {
-  innerW = optW - optH - Math.round(fs * 0.4)
-  const perLine = Math.max(1, Math.floor(innerW / (optFs * 1.24)))
-  lines = Math.min(3, Math.max(1, Math.ceil(maxLen / perLine)))
-  if (narrow && maxLen > 5) lines = Math.max(lines, 2)   // 窄屏超过 5 字必折行
-  const h = Math.max(minH, lines * lineH + optPadV * 2 + 4)
-  if (h === optH) break
-  optH = h
-}
+this.lift = sw < 280 ? Math.round(fs * 1.8) : 0   // 手环 10 ≈ 22 物理px
 ```
+
+上抬之后 `bottomHeight()` 的三个分支（typing / choices / end）**都要加 `lift`**，
+否则底部内容会溢出画布。`lift` 必须在 `this.fs = fs` 之后立刻算出来 ——
+`apply()` 里 `sTyping` 比 `layoutChoices()` 更早赋值，算晚了会拿到 `undefined`。
+
+---
+
+## 21. 应用图标必须是正圆，不能用圆角矩形
+
+手表桌面的图标位是**圆形遮罩**。`icon.png` 如果画成圆角矩形，四个角会被遮罩切掉，
+看起来像图标被啃了一口 —— 而且因为圆角矩形本身已经内缩了，切完剩下的可视区比预期更小。
+
+正确做法：PNG 本身就画成**正圆、四角透明**，内圈装饰按圆底重新配比。
+
+`tools/gen_icons.py` 里：
+
+```python
+# 圆角矩形（错）
+d.rounded_rectangle([0, 0, n*S-1, n*S-1], radius=44*S, fill=BG)
+# 正圆（对）
+d.ellipse([0, 0, n*S-1, n*S-1], fill=BG)
+```
+
+改成正圆之后**内圈要跟着收**。圆角矩形的对角线能到 `96×√2 ≈ 136`，
+正圆只有 96 —— 原来贴边的装饰环会顶到圆边上。经验值：最外圈装饰环收到 **75~78**（圆底半径 96），
+留 20% 左右边距；表情/脸这类主体收到 46~48。
+
+```python
+for rr, a in [(75, 20), (65, 34), (57, 50)]:   # 三道环
+    ...
+fr = 46 * S                                     # 脸
+```
+
+尺寸固定 **192×192**，4 倍超采样后 `LANCZOS` 缩回去，边缘才不会有锯齿。

@@ -5,8 +5,19 @@
   "private": true,
   "type": "module",
   "license": "MIT",
+  "keywords": [
+    "vela",
+    "xiaomi",
+    "mi-band",
+    "redmi-watch",
+    "quick-app",
+    "aiot",
+    "desktop-pet",
+    "framework",
+    "template"
+  ],
   "engines": {
-    "node": ">=8.10"
+    "node": ">=18.19.0"
   },
   "scripts": {
     "build": "aiot build",
@@ -18,7 +29,8 @@
     "layout": "python tools/verify_layout.py",
     "pack": "python tools/build_models.py",
     "sign": "python tools/gen_sign_key.py",
-    "test": "node tools/smoke_test.mjs"
+    "test": "node tools/smoke_test.mjs",
+    "verify": "node tools/smoke_test.mjs && node tools/check_stories.mjs && python tools/verify_layout.py"
   },
   "devDependencies": {
     "aiot-toolkit": "1.1.4"

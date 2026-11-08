@@ -62,13 +62,13 @@ def read_manifest():
 
 
 def write_manifest(m):
-    with open(MANIFEST, "w", encoding="utf-8") as f:
+    with open(MANIFEST, "w", encoding="utf-8", newline="\n") as f:
         json.dump(m, f, ensure_ascii=False, indent=2)
         f.write("\n")   # json.dump 不补行尾换行，写回去会让 git 显示「无换行结尾」
 
 
 def write_target(w, h, model):
-    with open(TARGET_JS, "w", encoding="utf-8") as f:
+    with open(TARGET_JS, "w", encoding="utf-8", newline="\n") as f:
         f.write(
             "/**\n"
             " * 机型目标分辨率（自动生成，勿手改）。\n"
@@ -79,7 +79,7 @@ def write_target(w, h, model):
 
 
 def write_mode(dev):
-    with open(MODE_JS, "w", encoding="utf-8") as f:
+    with open(MODE_JS, "w", encoding="utf-8", newline="\n") as f:
         f.write(
             "/**\n"
             " * 构建模式（自动生成，勿手改）。\n"
