@@ -64,6 +64,7 @@ def read_manifest():
 def write_manifest(m):
     with open(MANIFEST, "w", encoding="utf-8") as f:
         json.dump(m, f, ensure_ascii=False, indent=2)
+        f.write("\n")   # json.dump 不补行尾换行，写回去会让 git 显示「无换行结尾」
 
 
 def write_target(w, h, model):
