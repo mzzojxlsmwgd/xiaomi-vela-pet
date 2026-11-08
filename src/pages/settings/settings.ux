@@ -127,7 +127,7 @@ export default {
     const btnPhys = Math.min(Math.max(sw * 0.105, 40), 56)
     const btn = Math.round(btnPhys * k)
     const ico = Math.round(btn * 0.5)
-    const fsPhys = Math.min(Math.max(sw * 0.042, 13), 20)
+    const fsPhys = Math.min(Math.max(sw * 0.042, 12), 20)
     const fs = Math.round(fsPhys * k)
     const pad = Math.round(DW * 0.07)
     const topH = btn + pad * 2

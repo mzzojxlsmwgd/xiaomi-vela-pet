@@ -31,7 +31,6 @@
       </div>
 
       <div class="endwrap" if="{{showEnd}}" style="{{sEndWrap}}">
-        <text class="ending" style="{{sEnding}}">结局 · {{endingName}}</text>
         <text class="affchg" if="{{affText}}" style="{{sAffChg}}">{{affText}}</text>
         <div class="acts" style="{{sActs}}">
           <div class="act" style="{{sAct}}" onclick="onReplay">
@@ -136,7 +135,7 @@ export default {
     const btnPhys = Math.min(Math.max(sw * 0.1, 36), 52)
     const btn = Math.round(btnPhys * k)
     const ico = Math.round(btn * 0.5)
-    const fsPhys = Math.min(Math.max(sw * 0.042, 13), 19)
+    const fsPhys = Math.min(Math.max(sw * 0.042, 12), 19)
     const fs = Math.round(fsPhys * k)
     const topH = btn + Math.round(fs * 1.6)
 
@@ -207,38 +206,30 @@ export default {
       return boxPad * 2 + n * (optH + optGap) + Math.round(fs * 0.3)
     }
     if (this.phase === 'end') {
-      /* 窄屏（手环 10）屏幕本来就矮，结算内容贴着底边看着往下坠 ——
-         整体上移一个字号多的高度，上面留白、下面也留白。 */
-      const lift = this.sw < 280 ? Math.round(fs * 1.6) : 0
-      return lift + Math.round(fs * 0.86) + Math.round(fs * 0.4) + Math.round(fs * 0.78) +
-        Math.round(fs * 0.4) + Math.round(fs * 2.5) + Math.round(fs * 1.2)
+      // 结算只显示好感增加量 + 两个按钮（结局名不再显示）
+      return Math.round(fs * 0.78) + Math.round(fs * 0.4) +
+        Math.round(fs * 2.5) + Math.round(fs * 1.2)
     }
     return Math.round(fs * 2.6)
   },
 
   /* 选项框：宽度固定，高度按最长那条文字决定要几行 ——
      以前高度写死 2.5 字号，遇到稍长的选项就被裁成半行（「有些选项显示不全」）。
-     现在框宽收到 76%、字号收到 0.82、内边距一起收，长句也能整句显示。 */
-  /* 选项框：宽度固定，高度按最长那条文字决定要几行。
-     两个独立问题，分开处理：
-       ① 文字过长：窄屏一行只放得下几个字，超过 5 个字必然折行 → 直接给两行高
-       ② 胶囊圆角：左右各 optH/2 是圆弧区，文字伸进去首尾字上下会被削 →
-          文字宽度收进直线段，并整体略微上移（圆角下沿收得更急） */
+     现在框宽收到 76%、字号收到 0.76、内边距一起收，长句也能整句显示。 */
   layoutChoices() {
     const fs = this.fs
     const optW = Math.round(DW * 0.76)
+    const optFs = Math.max(11, Math.round(fs * 0.76))
+    const optPadH = Math.round(fs * 0.42)
     /* 横屏机型（手环 10 Pro 只有 336 高）如果选项还按大字撑，消息区就只剩几十像素 ——
        整块挤在一起。这里把高度和间距一起收紧，换回一百多像素的消息区。 */
     const tight = this.ch < 420
-    const narrow = this.sw < 280
-    /* 窄屏（手环 10，212 宽）框窄，0.82 字号一行只放得下几个字、长句断得难看 →
-       收到 0.70，一行能多放两三个字，两行框里的折行也顺眼些。 */
-    const optFs = Math.max(11, Math.round(fs * (narrow ? 0.70 : 0.82)))
     const optPadV = Math.round(fs * (tight ? 0.34 : 0.46))
     const optGap = Math.round(fs * (tight ? 0.18 : 0.26))
     const boxPad = Math.round(fs * (tight ? 0.28 : 0.36))
-    const lineH = Math.round(optFs * 1.42)
-    const minH = Math.round(fs * (tight ? 2.0 : 2.2))
+    const innerW = optW - optPadH * 2
+    /* 每行字数按 1.24em 估：中文字宽本身是 1em，但字体字距 + 标点挤压会让实际占位变宽。 */
+    const perLine = Math.max(1, Math.floor(innerW / (optFs * 1.24)))
 
     // 当前这组选项里最长的一条，决定要留几行
     let maxLen = 0
@@ -246,25 +237,10 @@ export default {
       const t = (this.choices[i] && this.choices[i].text) || ''
       if (t.length > maxLen) maxLen = t.length
     }
-
-    /* 高度 ↔ 文字宽度互相咬合：框越高圆角半径越大，能放字的直线段越短。
-       迭代两轮就收敛（第一轮按最小高度估，第二轮用真实高度回算）。 */
-    let optH = minH
-    let innerW = optW
-    let lines = 1
-    for (let round = 0; round < 3; round++) {
-      // 左右各留 optH/2 的圆角区，再多留 0.4 字号抗锯齿余量
-      innerW = optW - optH - Math.round(fs * 0.4)
-      /* 每行字数按 1.24em 估：中文字宽名义 1em，但字距 + 标点挤压会让实际占位变宽。 */
-      const perLine = Math.max(1, Math.floor(innerW / (optFs * 1.24)))
-      lines = Math.max(1, Math.ceil(maxLen / perLine))
-      // ① 窄屏超过 5 个字必然折行，别指望一行塞下 —— 直接给两行高
-      if (narrow && maxLen > 5) lines = Math.max(lines, 2)
-      lines = Math.min(3, lines)
-      const h = Math.max(minH, lines * lineH + optPadV * 2 + 4)
-      if (h === optH) break
-      optH = h
-    }
+    const lines = Math.min(3, Math.max(1, Math.ceil(maxLen / perLine)))
+    const lineH = Math.round(optFs * 1.42)
+    /* 高度 = 行数 × 行高 + 上下内边距 + 4px 余量（设备实际行高可能比 lineH 高一点点）。 */
+    const optH = Math.max(Math.round(fs * (tight ? 2.0 : 2.2)), lines * lineH + optPadV * 2 + 4)
 
     this.optW = optW
     this.optH = optH
@@ -279,12 +255,9 @@ export default {
        加 padding 会把框撑出 choicebox，左右被裁。 */
     this.sChoice = 'width:' + optW + 'px;height:' + optH + 'px;border-width:1px;border-color:rgba(255,255,255,0.16);border-radius:' +
       Math.round(optH / 2) + 'px;margin-bottom:' + optGap + 'px;'
-    /* 行数只能走样式里的 lines —— text 组件没有 lines 属性（写上会编译报错）。
-       ② margin-bottom 让文字整体上移半个值：胶囊下沿收得比上沿急，
-       居中摆放时下沿容易压到字脚。 */
+    /* 行数只能走样式里的 lines —— text 组件没有 lines 属性（写上会编译报错）。 */
     this.sChoiceT = 'font-size:' + optFs + 'px;line-height:' + lineH +
-      'px;width:' + innerW + 'px;text-align:center;lines:' + lines +
-      ';margin-bottom:' + Math.round(fs * 0.24) + 'px;'
+      'px;width:' + innerW + 'px;text-align:center;lines:' + lines + ';'
   },
 
   layoutBottom() {
@@ -293,9 +266,7 @@ export default {
     this.msgAreaH = Math.max(40, this.ch - this.topH - bottomH)
     this.sBottom = 'height:' + bottomH + 'px;width:' + DW + 'px;'
     this.sMsgWrap = 'height:' + this.msgAreaH + 'px;width:' + DW + 'px;'
-    // 结算块整体上移（高度已经算进 bottomHeight，这里用 margin 把内容顶上去）
-    const lift = (this.phase === 'end' && this.sw < 280) ? Math.round(this.fs * 1.6) : 0
-    this.sEndWrap = 'width:' + DW + 'px;margin-bottom:' + lift + 'px;'
+    this.sEndWrap = 'width:' + DW + 'px;'
   },
 
   /* ---------------- 剧情 ---------------- */

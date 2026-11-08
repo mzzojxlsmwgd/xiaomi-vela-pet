@@ -13,7 +13,6 @@
     6) perPage 行 + 分页条 不超出 body
 
 v2.9.5 起光斑层已取消（纯黑底），不再校验光斑位置。
-窄屏（<280 宽）主页顶栏是两行：消息按钮一行、时间+好感一行。
 
 用法：python tools/verify_layout.py
 """
@@ -43,7 +42,7 @@ def layout_index(sw, sh):
     ch = int(round(sh * k))
     btn_phys = clamp(sw * 0.1, 40, 54)
     btn = int(round(btn_phys * k))
-    fs_phys = clamp(sw * 0.042, 13, 18)
+    fs_phys = clamp(sw * 0.042, 12, 18)
     fs = int(round(fs_phys * k))
     pad = int(round(ch * 0.03))
     # 窄屏（手环 10）顶部拆两行：第一行消息按钮，第二行时钟+好感
@@ -72,7 +71,7 @@ def layout_inbox(sw, sh):
     ch = int(round(sh * k))
     btn_phys = clamp(sw * 0.105, 38, 56)
     btn = int(round(btn_phys * k))
-    fs_phys = clamp(sw * 0.042, 13, 20)
+    fs_phys = clamp(sw * 0.042, 12, 20)
     fs = int(round(fs_phys * k))
     top_h = btn + int(round(DW * 0.06))
     body_h = ch - top_h
@@ -216,7 +215,8 @@ def main():
         # 触摸尺寸（物理像素）
         if L["btn"] / k < 39.5:
             problems.append("按钮物理尺寸 %.1f < 40" % (L["btn"] / k))
-        if L["fs"] / k < 12.5:
+        # 下限 12 经 round(k) 后可能落到 11.9x，留一点取整余量
+        if L["fs"] / k < 11.85:
             problems.append("字号物理 %.1f 偏小" % (L["fs"] / k))
 
         emoji_phys = L["emoji"] / k
