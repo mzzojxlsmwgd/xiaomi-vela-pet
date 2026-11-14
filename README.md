@@ -211,10 +211,10 @@ node tools/check_stories.mjs      # 校验断链 / 死循环 / 不可达分支
 |---|---|---|
 | 小米手环 10 | 212 × 520 | 178 |
 | 小米手环 10 Pro（横屏） | 480 × 336 | 146 |
-| 红米手表 4 | 390 × 450 | 201 |
-| 红米手表 5 / 6 | 432 × 514 | 235 |
+| 红米手表 5 / 6（**通用一个包**） | 432 × 514 | 235 |
 
-> 红米手表 5 和 6 分辨率相同，**运行时无法区分**，所以按更保守的 Watch 5 设计，一款包通吃。
+> 红米手表 5 和 6 分辨率完全相同（432 × 514），**运行时无法区分**，所以打包时合成一个 `rw56` 包。
+> 两者只有屏幕圆角不同（5 是 90、6 是 26），布局按更保守的 Watch 5 设计，一款包通吃。
 
 布局是按 `designWidth: 480` 写的，运行时用 `TARGET = {W, H}` 按机型重算所有尺寸。
 加机型：改 `tools/build_models.py` 的 `MODELS` 表即可。
@@ -231,7 +231,7 @@ npm run build
 python tools/gen_sign_key.py     # 生成 sign/private.pem + sign/certificate.pem
 npm run release
 
-# 一次出四个机型 + 一个开发者版
+# 一次出三个机型 + 一个开发者版
 python tools/build_models.py     # 产物在 packages/
 ```
 
