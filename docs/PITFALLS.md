@@ -399,3 +399,44 @@ fr = 46 * S                                     # 脸
 ```
 
 尺寸固定 **192×192**，4 倍超采样后 `LANCZOS` 缩回去，边缘才不会有锯齿。
+
+---
+
+## 22. `package.json` 里千万别加 `"type": "module"` —— 编译产物会坏
+
+**症状**：应用装上、桌面上有图标，一点就黑屏 / 闪一下退回表盘。代码怎么查都是对的。
+
+**原因**：`"type": "module"` 会让 babel 把 `.js` 源码当 ESM 处理，输出 CJS 互操作代码时
+用 **Node 的全局 `exports`**，而不是 webpack 模块包装的局部别名。而 Vela 运行时里
+没有 `exports` 这个全局变量 → `app.js` 的 `onCreate` 一执行就抛 `ReferenceError` → 启动即退。
+
+```js
+// 有 "type": "module" 时编出来的（错）
+621:(e,t,o)=>{ o.r(t), Object.defineProperty(exports,"__esModule",{...}), exports.CHARACTER={...} }
+//                                          ^^^^^^^ 运行时不存在
+
+// 去掉之后（对）
+165:(e,t)=>{ Object.defineProperty(t,"__esModule",{...}), t.CHARACTER={...} }
+//                                          ^ 正确的 webpack exports 别名
+```
+
+**怎么验**：解包 rpk，扫所有 `.js`：
+
+```python
+import zipfile, re
+z = zipfile.ZipFile("xxx.rpk")
+for n in z.namelist():
+    if n.endswith(".js"):
+        s = z.read(n).decode("utf-8", "ignore")
+        c = len(re.findall(r"(?<![.\w$])exports\s*[.=]", s))   # 排除 x.exports / t.exports
+        if c: print(n, c)
+```
+
+**必须是 0**。正常项目 0 处；中招的项目会有几百处（本框架曾经是 261 处：
+app.js 2 / index 92 / chat 68 / inbox 65 / settings 31 / about 4）。
+
+**为什么 `npm test` 不受影响**：`tools/*.mjs` 是 `.mjs` 后缀，Node 天然按 ESM 处理，
+不依赖 `"type"`。所以这一行纯属多余，删掉即可。
+
+**这个坑藏了很久的原因**：源码完全正确，模拟运行也全过，只有编译产物是坏的 ——
+而框架的包当时从没在真机上验证过。**以后改完 `package.json`，一定要真机装一次。**
