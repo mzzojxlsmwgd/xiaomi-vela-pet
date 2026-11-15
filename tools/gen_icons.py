@@ -97,11 +97,57 @@ def icon_app():
         os.path.join(IMG, "icon.png"), optimize=True)
 
 
+def icon_swap():
+    """切换（立绘 ↔ 表情包）：上下两条反向箭头，中间留一道缝"""
+    n = 96
+    im = canvas(n)
+    d = ImageDraw.Draw(im)
+    w = 8 * S
+    # 上箭头：从左到右
+    y1 = 34 * S
+    rounded_line(d, (26 * S, y1), (66 * S, y1), w, WHITE)
+    rounded_line(d, (66 * S, y1), (54 * S, y1 - 12 * S), w, WHITE)
+    rounded_line(d, (66 * S, y1), (54 * S, y1 + 12 * S), w, WHITE)
+    # 下箭头：从右到左
+    y2 = 62 * S
+    rounded_line(d, (70 * S, y2), (30 * S, y2), w, (150, 205, 235, 235))
+    rounded_line(d, (30 * S, y2), (42 * S, y2 - 12 * S), w, (150, 205, 235, 235))
+    rounded_line(d, (30 * S, y2), (42 * S, y2 + 12 * S), w, (150, 205, 235, 235))
+    save(im, "ic_swap.png", n)
+
+
+def icon_adjust():
+    """调整（移动 + 缩放）：十字四向箭头"""
+    n = 96
+    im = canvas(n)
+    d = ImageDraw.Draw(im)
+    w = 7 * S
+    c = 48 * S
+    a = 22 * S        # 臂长
+    h = 9 * S         # 箭头半宽
+    # 十字
+    rounded_line(d, (c - a, c), (c + a, c), w, WHITE)
+    rounded_line(d, (c, c - a), (c, c + a), w, WHITE)
+    # 四个箭头
+    for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+        tipx, tipy = c + dx * (a + 8 * S), c + dy * (a + 8 * S)
+        bx, by = c + dx * a, c + dy * a
+        px, py = -dy, dx
+        d.polygon([
+            (tipx, tipy),
+            (bx + px * h, by + py * h),
+            (bx - px * h, by - py * h)
+        ], fill=WHITE)
+    save(im, "ic_adjust.png", n)
+
+
 if __name__ == "__main__":
     os.makedirs(IMG, exist_ok=True)
     icon_exit()
     icon_back()
     icon_set()
+    icon_swap()
+    icon_adjust()
     icon_app()
     for f in sorted(os.listdir(IMG)):
         print(f, "%.1fKB" % (os.path.getsize(os.path.join(IMG, f)) / 1024.0))

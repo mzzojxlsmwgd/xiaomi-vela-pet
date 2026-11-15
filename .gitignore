@@ -6,6 +6,9 @@ dist/
 build/
 packages/
 
+# 预览图（tools/preview_index.py 生成，随手可重跑）
+preview/
+
 # 签名密钥 —— 绝对不要提交
 sign/
 

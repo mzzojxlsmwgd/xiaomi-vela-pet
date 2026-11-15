@@ -440,3 +440,64 @@ app.js 2 / index 92 / chat 68 / inbox 65 / settings 31 / about 4）。
 
 **这个坑藏了很久的原因**：源码完全正确，模拟运行也全过，只有编译产物是坏的 ——
 而框架的包当时从没在真机上验证过。**以后改完 `package.json`，一定要真机装一次。**
+
+---
+
+## 23. 上一条的自检要跑**正式包**，调试包里那几百处是假警报
+
+**症状**：按上一条的方法扫 `npm run build` 出来的调试包，满屏都是「中招」，以为 bug 又回来了。
+
+**原因**：调试包（`NODE_PHASE=dev`）不做压缩，模块包装是
+`function(module, exports, $app_require$){...}` —— **`exports` 是形参**，
+`exports.default = ...` 完全合法。正式包（`prod`）压成 `(e,t)=>{...}`，
+`exports` 才是那个不存在的全局变量。
+
+所以自检必须拿 `packages/` 里的 **release 包**跑，或者至少看一眼命中的地方是不是在
+`(module, exports, ...)` 这种包装里。
+
+```python
+sig = re.search(rb"\(module,\s*exports", content)   # 调试包特征，有就别数了
+```
+
+---
+
+## 24. 立绘模式别混用 `onclick` / `onlongpress` 和 `ontouchstart`
+
+**症状**：立绘模式里点一下不说话、或者长按不弹按钮（取决于哪套事件被吃掉）。
+
+**原因**：同一个节点上既有原始触摸事件、又有手势事件时，Vela 的行为不稳定 ——
+触摸序列被 `ontouchstart` 接管后，`onclick` 的识别可能就不触发了。
+
+**做法**：立绘那层只挂 `ontouchstart / ontouchmove / ontouchend`，**三个都不挂手势**，
+自己在抬手时判：
+
+```js
+onDragEnd() {
+  const dt = new Date().getTime() - this.dragT0
+  if (this.dragMoved) return this.saveViewState()   // 拖过 = 只存位置
+  if (dt >= 500) return this.onLongPress()          // 按住 ≥ 0.5s = 长按
+  this.onTap()                                      // 否则 = 点击
+}
+```
+
+顺带：`e.touches[0].clientX / clientY` 是**物理 px**，要乘 `k = 480/sw` 才能和
+设计 px 的坐标比。chat 页翻页也是这么做的。
+
+---
+
+## 25. 用 PIL 画预览图时，`ImageDraw` 不做 alpha 混合
+
+**症状**：预览图里半透明面板、按钮底全部变成**纯白**，和实机完全不一样。
+
+**原因**：`ImageDraw.Draw(im, "RGBA")` 画 RGBA 颜色时是**直接替换像素**（不是叠加），
+存成 RGB 时 alpha 一丢，`rgba(255,255,255,0.07)` 就变成了纯白。
+
+**做法**：半透明的东西先画到一张全透明图层，再 `im.alpha_composite(layer)`：
+
+```python
+layer = Image.new("RGBA", im.size, (0, 0, 0, 0))
+ImageDraw.Draw(layer).rounded_rectangle(box, radius=r, fill=(0, 0, 0, 158))
+im.alpha_composite(layer)
+```
+
+`tools/preview_index.py` 里的 `Canvas.rrect()` 就是这么写的。

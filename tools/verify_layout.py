@@ -58,10 +58,44 @@ def layout_index(sw, sh):
     emoji = int(round(min(cw * em_ratio, stage_h * 0.92)))
     card = int(round(emoji * 1.08))
     bubble_w = cw - int(round(cw * 0.16))
+    # 立绘模式：气泡宽度 0.74 画布宽，高度同表情包气泡
+    tb_w = int(round(cw * 0.74))
+    tb_h = bubble_h
+    tb_gap = int(round(ch * 0.02))
+    tb_top = ch - bot_h - tb_gap - tb_h
+    # 底栏按钮组间距
+    btn_gap = int(round(btn * 0.42))
+    # 调整面板
+    a_pad = int(round(fs * 0.7))
+    a_tip = int(round(fs * 1.7))
+    a_knob = int(round(fs * 1.5))
+    a_slider = int(round(a_knob * 1.3))
+    a_btn_h = max(int(round(fs * 2.6)), int(round(40 * k)))
+    a_g = int(round(fs * 0.5))
+    a_pan_h = a_pad * 2 + a_tip + a_g + a_slider + a_g + a_btn_h
+    a_track_w = int(round(cw * 0.62))
+    a_btn_w = int(round(cw * 0.26))
     return dict(k=k, cw=cw, ch=ch, btn=btn, fs=fs, pad=pad, top_h=top_h,
                 bot_h=bot_h, gap=gap, bubble_h=bubble_h, stage_h=stage_h,
                 emoji=emoji, card=card, bubble_w=bubble_w,
-                narrow=narrow, aff_h=aff_h, row_gap=row_gap)
+                narrow=narrow, aff_h=aff_h, row_gap=row_gap,
+                tb_w=tb_w, tb_h=tb_h, tb_top=tb_top, btn_gap=btn_gap,
+                a_pad=a_pad, a_pan_h=a_pan_h, a_btn_h=a_btn_h, a_btn_w=a_btn_w,
+                a_tip=a_tip, a_g=a_g, a_track_w=a_track_w, a_knob=a_knob, a_slider=a_slider)
+
+
+def tachie_box(L, size=0.92, posx=0.5, posy=0.46, aspect=0.68):
+    """与 index.ux 的 layoutTachie() 完全一致"""
+    cw, ch = L["cw"], L["ch"]
+    h = int(round(ch * size))
+    w = int(round(h * aspect))
+    max_w = int(round(cw * 1.3))
+    if w > max_w:
+        w = max_w
+        h = int(round(w / aspect))
+    lx = min(max(posx * cw - w / 2.0, -w * 0.6), cw - w * 0.4)
+    ty = min(max(posy * ch - h / 2.0, -h * 0.6), ch - h * 0.4)
+    return lx, ty, w, h
 
 
 # ---------------- inbox.ux ----------------
@@ -191,12 +225,47 @@ def main():
             if not ok:
                 problems.append("顶部信息钮 %s" % why)
 
-        # 底部：设置钮居中
-        bx = (W - L["btn"]) / 2.0
-        by = H - L["bot_h"] + L["pad"]
-        ok, why = rect_ok(bx, by, bx + L["btn"], by + L["btn"], W, H, r_css)
+        # 底部按钮组：表情包模式 2 个（切换 / 设置）、立绘模式 3 个（切换 / 调整 / 设置），整组居中
+        for cnt, tag in ((2, "底栏2钮"), (3, "底栏3钮")):
+            gw = cnt * L["btn"] + (cnt - 1) * L["btn_gap"]
+            gx = (W - gw) / 2.0
+            by = H - L["bot_h"] + L["pad"]
+            for i in (0, cnt - 1):
+                x0 = gx + i * (L["btn"] + L["btn_gap"])
+                ok, why = rect_ok(x0, by, x0 + L["btn"], by + L["btn"], W, H, r_css)
+                if not ok:
+                    problems.append("%s 第%d个 %s" % (tag, i + 1, why))
+
+        # 立绘模式：浮在底栏上方的气泡
+        ok, why = rect_ok((W - L["tb_w"]) / 2.0, L["tb_top"],
+                          (W + L["tb_w"]) / 2.0, L["tb_top"] + L["tb_h"], W, H, r_css)
         if not ok:
-            problems.append("底部设置钮 %s" % why)
+            problems.append("立绘气泡 %s" % why)
+
+        # 立绘本身：默认参数下要盖住大半个屏幕。
+        # 窄高屏（手环 10）会被「1.3 倍画布宽」的上限压到 78% 左右，所以门槛放到 75%
+        tx, ty, tw, th = tachie_box(L)
+        if th < H * 0.75:
+            problems.append("立绘只占屏高 %d%%" % round(th * 100.0 / H))
+
+        # 调整面板：滑条 + 复位/完成两个按钮
+        pan_top = H - L["a_pan_h"]
+        by2 = H - L["a_pad"] - L["a_btn_h"]
+        gw = 2 * L["a_btn_w"] + L["a_g"]
+        gx = (W - gw) / 2.0
+        for i in (0, 1):
+            x0 = gx + i * (L["a_btn_w"] + L["a_g"])
+            ok, why = rect_ok(x0, by2, x0 + L["a_btn_w"], by2 + L["a_btn_h"], W, H, r_css)
+            if not ok:
+                problems.append("调整面板第%d个按钮 %s" % (i + 1, why))
+        sl_y = pan_top + L["a_pad"] + L["a_tip"] + L["a_g"]
+        kn_y0 = sl_y + (L["a_slider"] - L["a_knob"]) / 2.0
+        ok, why = rect_ok((W - L["a_track_w"]) / 2.0, kn_y0,
+                          (W + L["a_track_w"]) / 2.0, kn_y0 + L["a_knob"], W, H, r_css)
+        if not ok:
+            problems.append("调整滑条 %s" % why)
+        if L["a_btn_h"] / k < 39.5:
+            problems.append("调整按钮物理高 %.1f < 40" % (L["a_btn_h"] / k))
 
         # 表情卡片（圆角矩形）
         cx0 = (W - L["card"]) / 2.0
