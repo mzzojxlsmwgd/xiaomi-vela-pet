@@ -3,7 +3,8 @@
  *
  * 存储结构（key: lt_inbox）：
  *   {
- *     day: '2026-10-31',                    // 今天已经自动触发过一条了（每天最多一条）
+ *     day: '2026-11-20',                    // 最近一次判定的日期（跨天把 count 归零）
+ *     count: 2,                             // 今天已经自动冒出的「普通剧情」条数
  *     items: {
  *       storyId: { unread: 1, order: 1750000000000, times: 3, best: 'good' }
  *     }
@@ -15,10 +16,18 @@
  *   · 正式版只显示「已经收到过」的对话 —— 没解锁的不占位置
  *   · 开发者版显示全量，方便逐段查看
  *
- * 触发节奏：
- *   · 每天最多自动冒出一条新消息（不再「每个时段都来一条」）
- *   · 命中日期事件时也只有一半概率走日期剧情，其余走普通时段剧情
- *   · 好感度不够的剧情既不会自动触发，也不会出现在候选池里
+ * 触发规则：
+ *   ① 每次登录判定一次：概率 = 1 / 当前可触发对话数
+ *      「可触发」= 好感度够 + 从未冒出来过 + 时段/日期对得上
+ *   ② 普通剧情每天最多 dailyCap 条（默认 3）；额度用完就只可能冒好感度剧情
+ *   ③ 好感度剧情（minAff > 0）与终章彩蛋**不受每日上限**，
+ *      而且好感度剧情不看时段 —— 关系里程碑随时都可能发生
+ *   ④ 一条剧情只要冒出来过（有 order），就**永远不会再自动触发**，
+ *      想再看只能去消息中心点开重玩
+ *
+ * 为什么不是「每天一条」：一天只给一条时，一个 5 段剧情的角色要 5 天才能看全，
+ * 而每次打开只掷一次骰子又太容易连着几天空手。改成「1/n + 每天 3 条」之后，
+ * 可触发的越多越难中，但一天最多能收 3 条，节奏反而更接近「有消息就收」。
  */
 import { getJSON, setJSON } from './store.js'
 import { STORY_META } from './story-meta.js'
@@ -43,10 +52,13 @@ export const EGG_AFF = typeof FIN.minAff === 'number' ? FIN.minAff : 180
 /** 终章机制是否启用 */
 const FIN_ON = !!(EGG_ID && FINAL_ID)
 
-const DATE_CHANCE = 0.5                    // 命中日期事件时，走日期剧情的概率
+/** 普通剧情每天最多自动冒出几条（好感度剧情 / 彩蛋不占额度）。在 character.js 里可配。 */
+export const DAILY_CAP = typeof CHARACTER.dailyCap === 'number' && CHARACTER.dailyCap > 0
+  ? CHARACTER.dailyCap
+  : 3
 
 function emptyState() {
-  return { day: '', items: {} }
+  return { day: '', count: 0, items: {} }
 }
 
 export function slotOf(d) {
@@ -82,6 +94,8 @@ export function loadState(cb) {
     const st = (s && typeof s === 'object') ? s : emptyState()
     if (!st.items || typeof st.items !== 'object') st.items = {}
     if (typeof st.day !== 'string') st.day = ''
+    // 老存档没有 count 字段 → 当作 0（今天还没冒过普通剧情）
+    if (typeof st.count !== 'number' || st.count < 0) st.count = 0
     cb(st)
   })
 }
@@ -90,9 +104,33 @@ export function saveState(state, cb) {
   setJSON(INBOX_KEY, state, cb)
 }
 
+/** 这条剧情今天「对得上时间」吗（日期事件 / 时段） */
+function timeOk(s, slot, ev) {
+  if (s.dates && s.dates.length) {
+    let hit = false
+    for (let i = 0; i < s.dates.length; i++) {
+      if (ev.indexOf(s.dates[i]) >= 0) { hit = true; break }
+    }
+    if (!hit) return false
+  }
+  if (s.slots && s.slots.length) return s.slots.indexOf(slot) >= 0
+  return true
+}
+
 /**
- * 打开快应用时，每天最多冒出一条新对话（置顶 + 红点）。
+ * `slots: []` 且没有 `dates` = 显式声明「永远不会自动触发」。
+ * 终章彩蛋、以及那些只能靠 revealStory() 推出来的剧情，都该这么写。
+ */
+function neverAuto(s) {
+  return !!(s.slots && !s.slots.length && !(s.dates && s.dates.length))
+}
+
+/**
+ * 每次登录判定一次：概率 = 1 / 当前可触发对话数。
  * cb(state, triggeredStoryId|null)
+ *
+ * 彩蛋 > 好感度剧情 > 普通剧情，但都走同一个骰子；
+ * 只有普通剧情占「每天 DAILY_CAP 条」的额度。
  */
 export function maybeTrigger(cb) {
   loadState(function (st) {
@@ -100,11 +138,19 @@ export function maybeTrigger(cb) {
     const slot = slotOf(d)
     const today = dayKey(d)
 
+    // 跨天 → 每日额度归零。脏了就要落盘，否则存储里一直挂着昨天的 count
+    let dirty = false
+    if (st.day !== today) {
+      st.day = today
+      st.count = 0
+      dirty = true
+    }
+
     loadAff(function (aff) {
       const v = effAff(aff)          // 开发者模式下 = 满值，所有剧情都可触发
 
-      // ⓪ 终章彩蛋：只要还没冒过，就优先给 ——
-      //    这是「通关」奖励，不该排在每日一条后面等着。
+      // ⓪ 终章彩蛋：只要还没冒过就优先给。
+      //    它不占每日额度、不看时段 —— 这是「通关」奖励，不该排队等着。
       //    （finale 没配时 FIN_ON 为 false，整段跳过）
       if (FIN_ON && v >= EGG_AFF && !received(st, EGG_ID)) {
         st.items[EGG_ID] = { unread: 1, order: d.getTime(), times: 0, best: '' }
@@ -112,51 +158,39 @@ export function maybeTrigger(cb) {
         return
       }
 
-      // 今天已经给过了 → 什么都不做，只更新红点
-      if (st.day === today) { cb(st, null); return }
-
-      // 只从「好感度够」的剧情里挑
-      //   · 彩蛋不走随机池（它只从上面的专用通道出现）
-      //   · 最终消息要等彩蛋通关；老存档里已经收到过的照旧
-      const avail = STORY_META.filter(function (s) {
-        if (FIN_ON && s.id === EGG_ID) return false
-        if (FIN_ON && s.id === FINAL_ID && !eggDone(st) && !received(st, FINAL_ID)) return false
-        return unlocked(s, v)
-      })
-
-      // ① 今天有日期事件 → 一半概率走日期剧情（还要命中它的 slots）
       const ev = eventsOf(d)
-      let pool = []
-      if (Math.random() < DATE_CHANCE) {
-        pool = avail.filter(function (s) {
-          if (!s.dates) return false
-          let hit = false
-          for (let i = 0; i < s.dates.length; i++) {
-            if (ev.indexOf(s.dates[i]) >= 0) { hit = true; break }
-          }
-          if (!hit) return false
-          if (s.slots && s.slots.length) return s.slots.indexOf(slot) >= 0
-          return true
-        })
-      }
-      // ② 没有日期剧情 → 按时段挑普通剧情
-      if (!pool.length) {
-        pool = avail.filter(function (s) {
-          return !s.dates && s.slots && s.slots.indexOf(slot) >= 0
-        })
-      }
-      if (!pool.length) pool = avail.filter(function (s) { return !s.dates })
-      if (!pool.length) pool = avail
-      if (!pool.length) { cb(st, null); return }
+      const bond = []        // 好感度剧情 + 最终消息：不占每日额度、不看时段
+      const normal = []      // 普通剧情：按时段/日期，占每日额度
 
-      // 优先挑「没玩过的」，都玩过就随机
-      const fresh = pool.filter(function (s) {
-        const it = st.items[s.id]
-        return !it || !it.times
-      })
-      const list = fresh.length ? fresh : pool
-      const pick = list[Math.floor(Math.random() * list.length)]
+      for (let i = 0; i < STORY_META.length; i++) {
+        const s = STORY_META[i]
+        if (FIN_ON && s.id === EGG_ID) continue          // 彩蛋只走上面的专用通道
+        if (received(st, s.id)) continue                 // 冒出来过就不再自动触发
+        if (!unlocked(s, v)) continue                    // 好感度不够
+        if (neverAuto(s)) continue                       // 声明了不自动触发
+        if (FIN_ON && s.id === FINAL_ID && !eggDone(st)) continue   // 最终消息要等彩蛋通关
 
+        if (s.minAff > 0) {
+          bond.push(s)
+        } else if (timeOk(s, slot, ev)) {
+          normal.push(s)
+        }
+      }
+
+      // 今天没有可触发的了 → 只把跨天重置落盘
+      const flush = function () {
+        if (dirty) saveState(st, function () { cb(st, null) })
+        else cb(st, null)
+      }
+
+      // 今天的普通额度用完了 → 只剩好感度剧情还能冒
+      const pool = (st.count < DAILY_CAP) ? bond.concat(normal) : bond
+      if (!pool.length) { flush(); return }
+
+      // 概率 = 1 / 可触发对话数
+      if (Math.random() >= 1 / pool.length) { flush(); return }
+
+      const pick = pool[Math.floor(Math.random() * pool.length)]
       const old = st.items[pick.id] || {}
       st.items[pick.id] = {
         unread: 1,
@@ -164,7 +198,8 @@ export function maybeTrigger(cb) {
         times: old.times || 0,
         best: old.best || ''
       }
-      st.day = today
+      // 只有普通剧情占每日额度
+      if (normal.indexOf(pick) >= 0) st.count++
       saveState(st, function () { cb(st, pick.id) })
     })
   })

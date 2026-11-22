@@ -88,7 +88,7 @@ const { STORIES } = await import('../src/config/stories.js')
 const { STORY_META, MAX_TITLE_LEN } = await import('../src/config/story-meta.js')
 const DLG = await import('../src/config/dialogue.js')
 const { slotOf, maybeTrigger, markDone, markRead, buildList, loadState, unreadCount,
-  EGG_ID, FINAL_ID, EGG_AFF } =
+  EGG_ID, FINAL_ID, EGG_AFF, DAILY_CAP } =
   await import('../src/config/inbox.js')
 const { eventsOf } = await import('../src/config/dates.js')
 const { LEVELS, levelOf, dayKey, resetAff } = await import('../src/config/affinity.js')
@@ -193,6 +193,20 @@ ok('等级 need 单调递增', LEVELS.every((x, i) => i === 0 || x.need > LEVELS
 
 console.log('\n[6] 消息触发')
 
+/* 触发判定依赖「现在几点」：样例里 `sample_slot` 只在 evening/night、
+   `sample_date` 只在 morning/noon + 周末。深夜跑测试（late 时段）两条都不匹配，
+   「好感 0 时能触发普通剧情」会假失败 —— 曾经真在 23:44 挂过一次。
+   这一段把时钟钉在 19:00（evening），段末还原。 */
+const RealDate = Date
+const FIXED_AT = new RealDate(new RealDate().setHours(19, 0, 0, 0)).getTime()
+globalThis.Date = class extends RealDate {
+  constructor(...a) {
+    if (a.length) super(...a)
+    else super(FIXED_AT)
+  }
+  static now() { return FIXED_AT }
+}
+
 function setAff(v, dev) {
   MEM.set('lt_aff', JSON.stringify({
     v, dev: dev || 0, day: '', streak: 0, days: 0, slotDay: '', slots: [], best: {}, last: 0
@@ -207,22 +221,78 @@ const loadAffState = (cb) => {
   getJSON('lt_aff', o => cb(o || { v: 0, dev: 0 }))
 }
 const done = (id) => new Promise(r => markDone(id, 'good', r))
+const metaOfId = (id) => STORY_META.filter(s => s.id === id)[0] || null
+const isNormal = (id) => { const m = metaOfId(id); return !!m && !(m.minAff > 0) }
+
+/* 触发是概率性的（1 / 当前可触发对话数），不能假设一次判定必中 ——
+   反复判定直到冒出一条。样例只有个位数剧情，期望 10 次以内就中。 */
+async function triggerUntil(max) {
+  const n = max || 800
+  for (let i = 0; i < n; i++) {
+    const id = await trigger()
+    if (id) return id
+  }
+  return null
+}
+/** 连续判定 n 次，收集期间冒出来的所有 id */
+async function triggerMany(n) {
+  const out = []
+  for (let i = 0; i < n; i++) {
+    const id = await trigger()
+    if (id) out.push(id)
+  }
+  return out
+}
 
 // ⚠️ affinity.js 是「进程内单例」，第一次 loadAff 之后就不再读存储。
 //    所以这里必须**先**把满好感写进存储，测完再用 resetAff 降回来。
+const today = dayKey(new Date())
+const eggReceived = { unread: 0, order: 1, times: 0, best: '' }
+
 clearInbox(); setAff(EGG_AFF)
 const t1 = await trigger()
 eq('好感满时优先触发彩蛋', t1, EGG_ID)
 
-// 彩蛋不占用「每天一条」的配额 —— 所以同一天还会再冒一条普通剧情
-const t2 = await trigger()
+// 彩蛋不占用每日额度 —— 同一天还会再冒一条普通剧情
+const t2 = await triggerUntil()
 ok('彩蛋不占用每日配额（同日还能收到普通剧情）',
   t2 && t2 !== EGG_ID && t2 !== FINAL_ID, '得到 ' + t2)
 await new Promise(r => markRead(t2, r))
 
-const t3 = await trigger()
-eq('每日配额用完后不再触发', t3, null)
+// 彩蛋收过之后，专用通道就该关掉
+const many = await triggerMany(600)
+ok('彩蛋收过之后不再走专用通道', many.indexOf(EGG_ID) < 0, many.join(','))
+ok('同一条剧情不会重复自动触发', new Set(many).size === many.length, many.join(','))
 
+// 每日额度打满 → 只剩好感度剧情（minAff > 0）还能冒
+MEM.set('lt_inbox', JSON.stringify({
+  day: today, count: DAILY_CAP, items: { [EGG_ID]: eggReceived }
+}))
+const capped = await triggerMany(600)
+eq('每日额度用完后不再冒普通剧情', capped.filter(isNormal).length, 0)
+ok('额度用完后好感度剧情照常能冒',
+  capped.length === 1 && metaOfId(capped[0]).minAff > 0, capped.join(','))
+
+// 跨天 → 昨天打满的额度不该带到今天
+MEM.set('lt_inbox', JSON.stringify({
+  day: '2000-01-01', count: DAILY_CAP, items: { [EGG_ID]: eggReceived }
+}))
+await trigger()
+const stDay = await new Promise(r => loadState(r))
+eq('跨天后 day 更新为今天', stDay.day, today)
+ok('跨天后 count 归零', stDay.count < DAILY_CAP, '得到 ' + stDay.count)
+
+// 好感降到 0 → 池子里只剩普通剧情
+await new Promise(r => resetAff(r))
+clearInbox()
+const zero = await triggerMany(2000)
+ok('好感 0 时能触发普通剧情', zero.length > 0, '2000 次判定一次都没中')
+ok('好感 0 时不冒好感度剧情', zero.filter(id => !isNormal(id)).length === 0, zero.join(','))
+
+// 终章：彩蛋玩完 → 最终消息被放出来
+MEM.set('lt_inbox', JSON.stringify({
+  day: today, count: 0, items: { [EGG_ID]: eggReceived }
+}))
 await done(EGG_ID)
 const st = await new Promise(r => loadState(r))
 ok('彩蛋玩完 → 最终消息被放出', !!(st.items[FINAL_ID] && st.items[FINAL_ID].order))
@@ -235,18 +305,7 @@ ok('列表里最终消息排在最前（未读优先）', ids[0] === FINAL_ID, i
 ok('列表里不出现没收到过的剧情',
   ids.every(id => st.items[id] && st.items[id].order), ids.join(','))
 
-// 彩蛋已收过 → 再触发时不该再走专用通道
-MEM.set('lt_inbox', JSON.stringify({
-  day: '', items: { [EGG_ID]: { unread: 0, order: 1, times: 1, best: 'good' } }
-}))
-const t5 = await trigger()
-ok('彩蛋收过之后不再走专用通道', t5 !== EGG_ID, '得到 ' + t5)
-
-// 降回 0 好感，确认普通剧情照常触发
-await new Promise(r => resetAff(r))
-clearInbox()
-const t4 = await trigger()
-ok('好感 0 时触发普通剧情', t4 && t4 !== EGG_ID && t4 !== FINAL_ID, '得到 ' + t4)
+globalThis.Date = RealDate          // 还原真实时钟
 
 /* ---------------- 收尾 ---------------- */
 

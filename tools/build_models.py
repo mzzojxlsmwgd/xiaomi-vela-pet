@@ -43,16 +43,22 @@ MANIFEST = os.path.join(ROOT, "src", "manifest.json")
 DIST = os.path.join(ROOT, "dist")
 OUT = os.path.join(ROOT, "packages")
 
+# 立绘素材目录（窄屏机型打包时要临时挪出去，见 park_tachie）
+TACHIE_DIR = os.path.join(ROOT, "src", "common", "tachie")
+# ★ 必须放在 src 外面：放在 src/common 里照样会被打进包，等于没排除
+TACHIE_PARK = os.path.join(ROOT, "_tachie_parked")
+TACHIE_MIN_W = 280          # 与 src/config/tachie.js 的 MIN_W 保持一致
+
 # 机型表：(key, 中文名, 物理宽, 物理高, versionCode, dev_mode)
 # 新增机型就往这里加一行；device-target.js 会被自动写对。
 MODELS = [
-    ("mb10",    "小米手环10",      212, 520, 1, 0),
-    ("mb10pro", "小米手环10 Pro",  480, 336, 2, 0),
+    ("mb10",    "小米手环10",      212, 520, 31, 0),
+    ("mb10pro", "小米手环10 Pro",  480, 336, 32, 0),
     # 红米手表 5 与 6 分辨率完全相同（432×514），运行时无法区分 → 合成一个通用包。
     # 两者的屏幕圆角不同（5 是 90、6 是 26），布局按更保守的 5 来设计，一个包通吃。
-    ("rw56",    "红米手表5/6",     432, 514, 3, 0),
+    ("rw56",    "红米手表5/6",     432, 514, 33, 0),
     # 开发者版
-    ("rw56",    "红米手表5/6",     432, 514, 5, 1),
+    ("rw56",    "红米手表5/6",     432, 514, 35, 1),
 ]
 
 # 源码恢复用的默认机型（打包完会写回去，避免残留某个机型）
@@ -95,6 +101,25 @@ def write_mode(dev):
         )
 
 
+def park_tachie(enable):
+    """窄屏机型不支持立绘模式 → 打包时把立绘素材临时挪出 src，省几百 KB。
+
+    返回 True 表示确实挪走了，调用方必须在 finally 里 unpark_tachie() 还原，
+    否则源码树会少一个目录（下次打包就没有立绘了）。
+    """
+    if not enable or not os.path.isdir(TACHIE_DIR):
+        return False
+    shutil.rmtree(TACHIE_PARK, ignore_errors=True)
+    os.rename(TACHIE_DIR, TACHIE_PARK)
+    return True
+
+
+def unpark_tachie(parked):
+    if parked and os.path.isdir(TACHIE_PARK):
+        shutil.rmtree(TACHIE_DIR, ignore_errors=True)
+        os.rename(TACHIE_PARK, TACHIE_DIR)
+
+
 def patch_manifest(vc, dev):
     m = read_manifest()
     base_pkg = m["package"].replace(".dev", "")
@@ -119,21 +144,29 @@ def build_one(key, name, w, h, vc, dev):
     env = dict(os.environ)
     env["CODEBUDDY_SAFE_DELETE_ENABLED"] = "0"
 
+    # 手环 10（212 宽）不支持立绘模式，素材不进包
+    parked = park_tachie(w < TACHIE_MIN_W)
+    if parked:
+        print("   （%d 宽不支持立绘模式，本次不打包 common/tachie）" % w)
+
     # dist/ 偶尔会被杀软或上一个 node 进程短暂占用，导致 rimraf 失败 →
     # 重试最多 3 次，每次先自己清一遍 dist。
     r = None
-    for attempt in range(1, 4):
-        shutil.rmtree(DIST, ignore_errors=True)
-        r = subprocess.run(
-            [NODE, TOOLKIT, "release"],
-            cwd=ROOT, env=env, capture_output=True, text=True
-        )
-        if r.returncode == 0 and os.path.isdir(DIST):
-            break
-        out = (r.stdout or "") + (r.stderr or "")
-        print("  第 %d 次失败：%s" % (attempt, out.strip().splitlines()[-1] if out.strip() else "(无输出)"))
-        if attempt < 3:
-            time.sleep(1.5)
+    try:
+        for attempt in range(1, 4):
+            shutil.rmtree(DIST, ignore_errors=True)
+            r = subprocess.run(
+                [NODE, TOOLKIT, "release"],
+                cwd=ROOT, env=env, capture_output=True, text=True
+            )
+            if r.returncode == 0 and os.path.isdir(DIST):
+                break
+            out = (r.stdout or "") + (r.stderr or "")
+            print("  第 %d 次失败：%s" % (attempt, out.strip().splitlines()[-1] if out.strip() else "(无输出)"))
+            if attempt < 3:
+                time.sleep(1.5)
+    finally:
+        unpark_tachie(parked)
     out = (r.stdout or "") + (r.stderr or "")
     print(out[-800:])
     if r.returncode != 0:
@@ -157,6 +190,8 @@ def build_one(key, name, w, h, vc, dev):
 
 
 def main():
+    # 上一次打包如果被强杀，立绘素材可能还躺在 _tachie_parked 里 —— 先还原
+    unpark_tachie(True)
     os.makedirs(OUT, exist_ok=True)
     ok = True
     for key, name, w, h, vc, dev in MODELS:

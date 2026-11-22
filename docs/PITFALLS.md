@@ -501,3 +501,198 @@ im.alpha_composite(layer)
 ```
 
 `tools/preview_index.py` 里的 `Canvas.rrect()` 就是这么写的。
+
+## 26. 想「打包时排除某个素材目录」，不能把它改名到 `src/` 里面
+
+`aiot build` 打的是整个 `src/` 目录，**不认任何排除规则**。想把某个机型用不到的
+素材剔出去（比如手环 10 不支持立绘，4 张 440KB 的立绘不该进包），只能临时把目录
+移出 `src/`：
+
+```python
+# ✅ 正确
+TACHIE_PARK = os.path.join(ROOT, "_tachie_parked")        # 在 src 外面
+# ❌ 错误 —— 挪到 src/common/_tachie_parked 照样被打进包
+TACHIE_PARK = os.path.join(ROOT, "src", "common", "_tachie_parked")
+```
+
+踩坑现场：改完包体积一个字节没变（2113 KB → 2113 KB），解包才发现
+`common/_tachie_parked/` 整整齐齐躺在里面。
+
+配套两件事，缺一个就会出事：
+- 挪走/还原要包在 `try / finally` 里，构建失败也必须还原，否则源码树少一个目录
+- `main()` 开头先跑一次还原，兜住「上次打包被强杀」留下的现场
+
+## 27. 绝对定位的全屏层要放在 `.page` 的**第一个**子节点
+
+立绘层 `.tlayer` 是 `position:absolute` 铺满画布的。它一旦排在顶栏后面，
+就会盖在顶栏上面 —— 立绘模式长按浮出顶栏后，消息按钮看得见但**点不动**
+（透明层照样吃触摸，因为它自己挂着 `ontouchstart`）。
+
+规则：**铺满屏幕的透明层放最前，交互面板放最后**。这样绘制顺序是
+「立绘 → 顶栏 → 底栏 → 调整面板」，每一层都能点到。
+
+同一个道理也适用于 `.bottombar-abs`：它必须排在 `.tlayer` 之后。
+
+## 28. 触发池的「兜底」会把声明过 `slots: []` 的剧情也挑出来
+
+旧版 `maybeTrigger` 挑剧情是三层兜底：
+
+```js
+if (!pool.length) pool = avail.filter(s => !s.dates)
+if (!pool.length) pool = avail          // ← 这一层
+```
+
+最后那层「实在没有就用全部」很贴心，但它让 `CUSTOMIZE.md` 里那句
+「`slots: []` + 没有 `dates` = 永远不会自动触发」变成了假话 —— 只要当天
+没有别的可触发剧情，终章彩蛋（`slots: []`）就会被这层兜底选中，提前冒出来。
+
+修法是在分池之前显式挡掉，别指望兜底：
+
+```js
+function neverAuto(s) {
+  return !!(s.slots && !s.slots.length && !(s.dates && s.dates.length))
+}
+// 循环里：
+if (neverAuto(s)) continue
+```
+
+同一个坑还有个变体：**彩蛋判断必须排在「每日额度」检查之前**。
+彩蛋是通关奖励，如果先判 `count >= DAILY_CAP` 就直接 return，满好感那天
+可能一条都冒不出来，玩家会以为机制坏了。
+
+## 29. 改成概率触发之后，冒烟测试不能再写「调一次必定冒一条」
+
+`maybeTrigger` 从「每天一条」改成「1 / 可触发数」之后，测试里原来的
+
+```js
+const t = await trigger()
+eq('...', t, 'sample_slot')      // ✗ 一半概率是 null
+```
+
+会随机挂。而且不是「偶发」，是**五成概率**挂 —— 这种测试比没有还糟，
+会让人误以为是实现坏了。
+
+正确写法是「反复判定直到冒出来」，因为不触发时 `maybeTrigger` 不改状态
+（只可能在跨天时落一次盘），重试是安全的：
+
+```js
+async function triggerUntil(max) {
+  for (let i = 0; i < (max || 800); i++) {
+    const id = await trigger()
+    if (id) return id
+  }
+  return null
+}
+```
+
+要断言「额度用完后不再冒」这种**否定**性质，反过来写：连续判定几百次，
+统计结果里不该出现普通剧情（`minAff === 0` 的那些）。
+单次调用证明不了任何事。
+
+## 30. 长按别在抬手时才判「按了多久」
+
+立绘模式不用 `onlongpress`（会跟 `ontouchstart` 互相吞，见第 24 条），
+长按只能自己在触摸事件里判。第一版图省事，在 `ontouchend` 里算
+`now - t0 >= 500` —— 逻辑上没错，手感是坏的：**按住半秒还得把手指抬起来才有反应**，
+用户会觉得「按了没反应，一松手才动」。
+
+正确做法是 `ontouchstart` 里直接挂定时器，到点就触发，不等抬手：
+
+```js
+onDragStart(e) {
+  this.dragOn = true
+  this.dragMoved = false
+  this.longFired = false
+  this.clearLong()
+  const self = this
+  this.longTimer = setTimeout(function () {
+    self.longTimer = 0
+    if (!self.dragOn || self.dragMoved) return   // 已经抬手 / 已经在拖了
+    self.longFired = true
+    self.onLongPress()
+  }, 500)
+}
+```
+
+三件事必须配套，少一个就出 bug：
+
+1. **手指移动要撤销定时器** —— 否则「想滑一下」也会被判成长按。
+   非拖动模式下也要处理，容差给 12 设计 px（手抖通常不超过这个）。
+2. **触发过之后抬手不能再当成点击** —— 用 `longFired` 挡住 `onTap()`，
+   否则顶栏浮出的同一瞬间又冒一句台词。这个 bug 很隐蔽：只在「长按」这一种路径上出现。
+3. **`onHide` / `onDestroy` 里清定时器** —— 页面切走之后回调还在跑，
+   改的是已销毁页面的 data。
+
+另外调整模式（拖动立绘）里**不要挂**这个定时器：手指本来就要按住拖，
+长按没有语义，挂了反而会在拖到一半时突然切换顶栏。
+
+## 31. 「让立绘活起来」不是让它一直动
+
+第一版给立绘加的是**持续呼吸浮动**：正弦上下 ±6 设计 px，一个来回 3.6 秒。
+想法是「角色在呼吸，更有生命感」。实机反馈是反的 —— 用户的原话是
+「不是呼吸震动，而是立绘切换后快速震动一下」。
+
+两个问题：
+
+- **一直动会分心**。手表是戴在手腕上、抬起来看一眼的东西，画面持续位移
+  会让人下意识去盯它。而且 3.6 秒一个来回的频率，看起来更像「画面在晃」，
+  不像「角色在呼吸」（真人呼吸频率是 3~4 秒一次，但幅度小到几乎看不出来）。
+- **成本是持续的**。60ms 一个 tick，每个 tick 都要判断、偶尔要写一次 style，
+  只要页面活着就一直跑。而「换脸抖一下」只在用户真的点了之后跑 8 帧。
+
+改成一次性反馈：
+
+```js
+// 触发点：只有差分 id 真的变了才抖
+setExpr(name) {
+  const id = diffIdFor(name)
+  if (id !== this.tachieId) {
+    this.tachieId = id
+    this.tachieSrc = tachiePath(id)
+    this.startShake()
+  }
+}
+
+// 主循环：静止时一个 if 就过去了
+if (this.shakeTick > 0 && !this.adjusting) {
+  this.shakeTick--
+  const decay = this.shakeTick / SHAKE_TICKS
+  const sgn = (this.shakeTick % 2 === 0) ? 1 : -1
+  this.shakeY = Math.round(sgn * (this.ch || 540) * SHAKE_AMP * decay)
+  this.renderTachie()
+} else if (this.shakeY !== 0) {
+  this.shakeTick = 0
+  this.shakeY = 0
+  this.renderTachie()
+}
+```
+
+三个细节：
+
+- **衰减要乘在幅度上，不是乘在频率上**。`decay = 剩余帧/总帧` 线性衰减，
+  最后一帧正好是 0，不用额外收尾。
+- **`shakeTick % 2` 决定方向**，上下交替。别用 `Math.sin(phase)` ——
+  8 帧只够跑 1.5 个来回，正弦取样点太少，看起来会像「跳了一下」而不是「抖」。
+- **调整面板打开时必须归位**（`else if (shakeY !== 0)` 分支），
+  否则抖到一半打开面板，立绘停在偏移位置上，拖起来对不准。
+
+## 32. 素材画质和体积上限：9MB 是新的红线
+
+早期文档里写过「rpk 必须 < 300KB」，那是 GIF 表情包时代的社区经验值，
+从来没有官方依据。主项目 `luotianyi-pet` 的正式包 1685 KB 在四个机型上
+跑了半年没出过问题 —— 这条线可以放掉。
+
+现在的实际标准是 **9MB**。所以立绘素材不必再压：
+
+| | 之前 | 现在 |
+|---|---|---|
+| 天依 4 张 | 654×960 / 48 色 / 440 KB | 872×1280 / 全彩 / 2121 KB |
+| Z14 8 张 | 654×752 / 48 色 / 542 KB | 1024×1178 / 原分辨率全彩 / 6097 KB |
+
+**48 色量化在 2D 插画上会出色带**，尤其是皮肤渐变和浅色衣服，放大到 2 倍以上
+一片一片的。3D 渲染（天依那几张）问题小一些，但也没必要为省 1.6MB 换画质。
+
+体积变大之后仍然要守的两条：
+- **手环 10 不打包立绘**（`park_tachie()` 把目录挪到 `src/` 外面），否则白多 2MB
+- **包体积增长要跟解码内存一起看**。1024×1178 的 PNG 解码后是 4.6MB RGBA，
+  8 张不同时显示、但图片缓存可能留住几张。真要出内存问题，先降分辨率再降色深。

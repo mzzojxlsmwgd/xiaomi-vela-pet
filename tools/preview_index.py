@@ -7,6 +7,8 @@
 用法：python tools/preview_index.py [机型key]
       机型key: mb10 / mb10pro / rw56（默认 rw56）
 产物：preview/index_<机型>_<状态>.png
+
+★ 手环 10（212 宽）不支持立绘模式，只出表情包那一张。
 """
 import os
 import sys
@@ -24,8 +26,10 @@ MODELS = {
     "mb10pro": (480, 336, 44),
     "rw56": (432, 514, 90),
 }
-SIZE_R, POS_X, POS_Y, ASPECT = 0.92, 0.5, 0.46, 0.68
-SIZE_MIN, SIZE_MAX = 0.30, 1.40
+SIZE_R, POS_X, POS_Y, ASPECT = 0.92, 0.5, 0.46, 872 / 1280
+SIZE_MIN, SIZE_MAX = 0.30, 3.00
+POS_LO, POS_HI = -0.5, 1.5
+TACHIE_MIN_W = 280
 
 FONT = None
 for cand in [r"C:\Windows\Fonts\msyh.ttc", r"C:\Windows\Fonts\simhei.ttf",
@@ -45,9 +49,19 @@ def clamp(v, lo, hi):
     return max(lo, min(hi, v))
 
 
+def clamp_offset(v, size, canvas):
+    """和 index.ux 里的 clampOffset 完全一致：图比画布小时整张留在画布内，
+    图比画布大时至少铺满不留空白。"""
+    if size <= canvas:
+        return clamp(v, 0, canvas - size)
+    return clamp(v, canvas - size, 0)
+
+
 def layout(sw, sh):
     k = DW / float(sw)
     cw, ch = DW, int(round(sh * k))
+    can_tachie = sw >= TACHIE_MIN_W
+
     btn_phys = clamp(sw * 0.1, 40, 54)
     btn = int(round(btn_phys * k))
     fs = int(round(clamp(sw * 0.042, 12, 18) * k))
@@ -64,31 +78,44 @@ def layout(sw, sh):
     emoji = int(round(min(cw * em_ratio, stage_h * 0.92)))
     card = int(round(emoji * 1.08))
     bubble_w = cw - int(round(cw * 0.16))
+    btn_gap = int(round(btn * 0.55))
+
+    # 立绘底栏（绝对定位贴底，键做大一号）
+    big = int(round(clamp(sw * 0.135, 48, 66) * k))
+    big_ico = int(round(big * 0.52))
+    big_gap = int(round(big * 0.55))
+    tbar_h = big + pad * 2
+
     tb_w = int(round(cw * 0.74))
     tb_h = bubble_h
     tb_gap = int(round(ch * 0.02))
-    tb_top = ch - bot_h - tb_gap - tb_h
-    btn_gap = int(round(btn * 0.42))
+    tb_top = ch - tbar_h - tb_gap - tb_h
 
-    a_pad = int(round(fs * 0.7))
-    a_tip = int(round(fs * 1.7))
-    a_knob = int(round(fs * 1.5))
-    a_slider = int(round(a_knob * 1.3))
-    a_btn_h = max(int(round(fs * 2.6)), int(round(40 * k)))
-    a_g = int(round(fs * 0.5))
-    a_pan_h = a_pad * 2 + a_tip + a_g + a_slider + a_g + a_btn_h
-    a_track_w = int(round(cw * 0.62))
-    a_track_h = max(3, int(round(fs * 0.4)))
-    a_btn_w = int(round(cw * 0.26))
+    # 调整面板
+    a_pad = int(round(fs * 0.8))
+    a_pad_b = max(a_pad, int(round(ch * 0.045)))
+    a_tip = int(round(fs * 1.8))
+    a_knob = int(round(fs * 2.2))
+    a_slider = int(round(a_knob * 1.35))
+    a_btn_h = max(int(round(fs * 3.0)), int(round(52 * k)))
+    a_g = int(round(fs * 0.6))
+    a_pan_h = a_pad + a_pad_b + a_tip + a_g + a_slider + a_g + a_btn_h
+    a_track_w = int(round(cw * 0.78))
+    a_track_h = max(5, int(round(fs * 0.7)))
+    a_btn_w = int(round(cw * 0.34))
+    a_btn_gap = int(round(fs * 0.9))
 
     return dict(k=k, cw=cw, ch=ch, btn=btn, fs=fs, pad=pad, narrow=narrow,
+                can_tachie=can_tachie,
                 aff_h=aff_h, row_gap=row_gap, top_h=top_h, bot_h=bot_h,
                 gap=gap, bubble_h=bubble_h, stage_h=stage_h, emoji=emoji,
-                card=card, bubble_w=bubble_w, tb_w=tb_w, tb_h=tb_h,
-                tb_top=tb_top, btn_gap=btn_gap, a_pad=a_pad, a_tip=a_tip,
-                a_knob=a_knob, a_slider=a_slider, a_btn_h=a_btn_h, a_g=a_g,
-                a_pan_h=a_pan_h, a_track_w=a_track_w, a_track_h=a_track_h,
-                a_btn_w=a_btn_w)
+                card=card, bubble_w=bubble_w, btn_gap=btn_gap,
+                big=big, big_ico=big_ico, big_gap=big_gap, tbar_h=tbar_h,
+                tb_w=tb_w, tb_h=tb_h, tb_top=tb_top,
+                a_pad=a_pad, a_pad_b=a_pad_b, a_tip=a_tip, a_knob=a_knob, a_slider=a_slider,
+                a_btn_h=a_btn_h, a_g=a_g, a_pan_h=a_pan_h,
+                a_track_w=a_track_w, a_track_h=a_track_h,
+                a_btn_w=a_btn_w, a_btn_gap=a_btn_gap)
 
 
 class Canvas(object):
@@ -126,11 +153,11 @@ class Canvas(object):
         self.im.alpha_composite(ic, (int(self.s(x)), int(self.s(y))))
 
 
-def draw_btn(c, L, x, y, icon):
-    c.rrect(x, y, L["btn"], L["btn"], L["btn"] / 2.0,
-            fill=(255, 255, 255, 18))
-    ic = L["btn"] * 0.5
-    c.icon(icon, x + (L["btn"] - ic) / 2.0, y + (L["btn"] - ic) / 2.0, ic, ic)
+def draw_btn(c, L, x, y, icon, d=None):
+    d = d or L["btn"]
+    c.rrect(x, y, d, d, d / 2.0, fill=(255, 255, 255, 18))
+    ic = d * 0.52
+    c.icon(icon, x + (d - ic) / 2.0, y + (d - ic) / 2.0, ic, ic)
 
 
 def draw_topbar(c, L, tachie=False):
@@ -161,11 +188,9 @@ def draw_topbar(c, L, tachie=False):
                "Lv.1 12", L["fs"] * 0.72)
 
 
-def draw_bottombar(c, L, tachie):
-    if tachie:      # 立绘模式：底栏底衬
-        c.rrect(0, L["ch"] - L["bot_h"], L["cw"], L["bot_h"], 0,
-                fill=(0, 0, 0, 158), outline=None)
-    icons = ["ic_swap.png"] + (["ic_adjust.png"] if tachie else []) + ["ic_set.png"]
+def draw_bottombar_emoji(c, L):
+    """表情包底栏：支持立绘的机型是 [切换][设置]，手环 10 只有 [设置]"""
+    icons = (["ic_swap.png"] if L["can_tachie"] else []) + ["ic_set.png"]
     n = len(icons)
     gw = n * L["btn"] + (n - 1) * L["btn_gap"]
     gx = (L["cw"] - gw) / 2.0
@@ -174,15 +199,23 @@ def draw_bottombar(c, L, tachie):
         draw_btn(c, L, gx + i * (L["btn"] + L["btn_gap"]), by, ic)
 
 
+def draw_bottombar_tachie(c, L):
+    """立绘底栏：绝对定位贴底 + 深色底衬 + 三个大键"""
+    c.rrect(0, L["ch"] - L["tbar_h"], L["cw"], L["tbar_h"], 0,
+            fill=(0, 0, 0, 158), outline=None)
+    icons = ["ic_swap.png", "ic_adjust.png", "ic_set.png"]
+    gw = 3 * L["big"] + 2 * L["big_gap"]
+    gx = (L["cw"] - gw) / 2.0
+    by = L["ch"] - L["tbar_h"] + L["pad"]
+    for i, ic in enumerate(icons):
+        draw_btn(c, L, gx + i * (L["big"] + L["big_gap"]), by, ic, L["big"])
+
+
 def draw_tachie(c, L, name, size_r=SIZE_R, px=POS_X, py=POS_Y):
     h = int(round(L["ch"] * size_r))
     w = int(round(h * ASPECT))
-    max_w = int(round(L["cw"] * 1.3))
-    if w > max_w:
-        w = max_w
-        h = int(round(w / ASPECT))
-    lx = clamp(px * L["cw"] - w / 2.0, -w * 0.6, L["cw"] - w * 0.4)
-    ty = clamp(py * L["ch"] - h / 2.0, -h * 0.6, L["ch"] - h * 0.4)
+    lx = clamp_offset(px * L["cw"] - w / 2.0, w, L["cw"])
+    ty = clamp_offset(py * L["ch"] - h / 2.0, h, L["ch"])
     p = os.path.join(TACHIE_DIR, name + ".png")
     im = Image.open(p).convert("RGBA").resize(
         (max(1, int(c.s(w))), max(1, int(c.s(h)))), Image.LANCZOS)
@@ -201,7 +234,7 @@ def draw_apanel(c, L, size_r):
     c.rrect(0, top, L["cw"], L["a_pan_h"], 0, fill=(16, 16, 20, 240))
     ty = top + L["a_pad"]
     c.text(L["cw"] / 2.0, ty + L["a_tip"] / 2.0, "拖动立绘调位置",
-           L["fs"] * 0.78, color=(154, 154, 163, 255))
+           L["fs"] * 0.82, color=(154, 154, 163, 255))
     sl_y = ty + L["a_tip"] + L["a_g"]
     track_y = sl_y + (L["a_slider"] - L["a_track_h"]) / 2.0
     left = (L["cw"] - L["a_track_w"]) / 2.0
@@ -216,14 +249,14 @@ def draw_apanel(c, L, size_r):
     c.rrect(kx, ky, kn, kn, kn / 2.0, fill=(243, 243, 246, 255),
             outline=(255, 255, 255, 140))
     btns = [("复位", 0.07), ("完成", 0.16)]
-    gw = 2 * L["a_btn_w"] + L["a_g"]
+    gw = 2 * L["a_btn_w"] + L["a_btn_gap"]
     gx = (L["cw"] - gw) / 2.0
-    by = L["ch"] - L["a_pad"] - L["a_btn_h"]
+    by = L["ch"] - L["a_pad_b"] - L["a_btn_h"]
     for i, (label, a) in enumerate(btns):
-        c.rrect(gx + i * (L["a_btn_w"] + L["a_g"]), by, L["a_btn_w"],
+        c.rrect(gx + i * (L["a_btn_w"] + L["a_btn_gap"]), by, L["a_btn_w"],
                 L["a_btn_h"], L["a_btn_h"] / 2.0, fill=(255, 255, 255, int(a * 255)))
-        c.text(gx + i * (L["a_btn_w"] + L["a_g"]) + L["a_btn_w"] / 2.0,
-               by + L["a_btn_h"] / 2.0, label, L["fs"] * 0.82)
+        c.text(gx + i * (L["a_btn_w"] + L["a_btn_gap"]) + L["a_btn_w"] / 2.0,
+               by + L["a_btn_h"] / 2.0, label, L["fs"] * 0.9)
 
 
 def draw_emoji_mode(c, L):
@@ -244,7 +277,7 @@ def draw_emoji_mode(c, L):
             fill=(255, 255, 255, 26))
     c.text(bx + L["fs"] * 0.9, by + L["bubble_h"] / 2.0,
            "今天也想和你说说话呢", L["fs"], anchor="lm")
-    draw_bottombar(c, L, False)
+    draw_bottombar_emoji(c, L)
 
 
 def main():
@@ -254,28 +287,41 @@ def main():
     if not os.path.isdir(OUT):
         os.makedirs(OUT)
 
+    if not L["can_tachie"]:
+        # 手环 10：不支持立绘模式，只出表情包那张（底栏没有切换键）
+        c = Canvas(sw, sh, L["k"])
+        draw_emoji_mode(c, L)
+        c.im.convert("RGB").save(os.path.join(OUT, "index_%s_emoji.png" % key))
+        print("产物在 preview/：%dx%d 物理像素（画布 %dx%d）—— 该机型不支持立绘模式"
+              % (sw, sh, L["cw"], L["ch"]))
+        return
+
     # ① 立绘模式：干净状态（无按钮）
     c = Canvas(sw, sh, L["k"])
-    draw_tachie(c, L, "smile")
+    draw_tachie(c, L, "shiguang")
     draw_tbubble(c, L, "今天也想和你说说话呢")
     c.im.convert("RGB").save(os.path.join(OUT, "index_%s_tachie.png" % key))
 
     # ② 立绘模式：长按后顶栏底栏浮出
     c = Canvas(sw, sh, L["k"])
-    draw_tachie(c, L, "smile")
+    draw_tachie(c, L, "shiguang")
     draw_tbubble(c, L, "今天也想和你说说话呢")
     draw_topbar(c, L, True)
-    draw_bottombar(c, L, True)
+    draw_bottombar_tachie(c, L)
     c.im.convert("RGB").save(os.path.join(OUT, "index_%s_tachie_chrome.png" % key))
 
-    # ③ 调整面板打开
+    # ③ 调整面板打开（onAdjust() 里 showBubble = false，气泡此时是隐藏的）
     c = Canvas(sw, sh, L["k"])
-    draw_tachie(c, L, "shy", 0.78)
-    draw_tbubble(c, L, "今天也想和你说说话呢")
+    draw_tachie(c, L, "ai1", 0.78)
     draw_apanel(c, L, 0.78)
     c.im.convert("RGB").save(os.path.join(OUT, "index_%s_adjust.png" % key))
 
-    # ④ 表情包模式（对照）
+    # ④ 放大到 2.4 倍 —— 看「凑近看脸」是不是真的做得到
+    c = Canvas(sw, sh, L["k"])
+    draw_tachie(c, L, "v4", 2.40, 0.5, 1.15)
+    c.im.convert("RGB").save(os.path.join(OUT, "index_%s_zoom.png" % key))
+
+    # ⑤ 表情包模式（对照）
     c = Canvas(sw, sh, L["k"])
     draw_emoji_mode(c, L)
     c.im.convert("RGB").save(os.path.join(OUT, "index_%s_emoji.png" % key))

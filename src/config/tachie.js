@@ -31,18 +31,18 @@ import { getJSON, setJSON } from './store.js'
 export const EXT = 'png'
 
 /** 立绘宽高比（宽 ÷ 高）。换素材尺寸时改这一个数 */
-export const ASPECT = 0.68
+export const ASPECT = 872 / 1280
 
 /** 立绘清单 —— 顺序就是差分的顺序，第一个通常是常态 */
 export const ITEMS = [
-  { id: 'normal', name: '常态' },
-  { id: 'smile', name: '微笑' },
-  { id: 'shy', name: '害羞' },
-  { id: 'sad', name: '低落' }
+  { id: 'v4', name: 'V4 公式服' },
+  { id: 'shiguang', name: '拾光' },
+  { id: 'ai1', name: 'AI 公式服' },
+  { id: 'ai2', name: 'AI 公式服·变身后' }
 ]
 
 /** 兜底立绘：没有映射、或者 diff 里写了不存在的 id 时用它 */
-export const DEFAULT_ID = 'normal'
+export const DEFAULT_ID = 'v4'
 
 /**
  * 表情 → 立绘差分。
@@ -50,18 +50,18 @@ export const DEFAULT_ID = 'normal'
  * 想「所有情绪共用一张」就把这张表整个删掉，只留 DEFAULT_ID。
  */
 export const DIFF = {
-  idle: 'normal',
-  happy: 'smile',
-  shy: 'shy',
-  sad: 'sad',
-  angry: 'sad',
-  think: 'normal',
-  cheer: 'smile',
-  eat: 'smile',
-  sing: 'smile',
-  surprise: 'shy',
-  sleep: 'normal',
-  love: 'shy'
+  idle: 'v4',
+  think: 'v4',
+  sleep: 'v4',
+  happy: 'shiguang',
+  cheer: 'shiguang',
+  eat: 'shiguang',
+  sing: 'shiguang',
+  love: 'shiguang',
+  shy: 'ai1',
+  surprise: 'ai1',
+  sad: 'ai2',
+  angry: 'ai2'
 }
 
 /**
@@ -71,13 +71,37 @@ export const DIFF = {
  */
 export const DEFAULT_VIEW = { size: 0.92, x: 0.5, y: 0.46 }
 
-/** 缩放滑块的上下限（同样是「占画布高度」的比例） */
+/**
+ * 缩放滑块的上下限（同样是「占画布高度」的比例）。
+ * 上限给到 3.0 —— 放大到顶时只看得到人物上半身/脸，这是「凑近看」的用法，
+ * 不是「摆一张全身像」。0.92 的默认值 = 差不多整屏高，是日常姿势。
+ */
 export const SIZE_MIN = 0.30
-export const SIZE_MAX = 1.40
+export const SIZE_MAX = 3.00
+
+/**
+ * 立绘中心允许拖到画布外的范围（0 = 左/上边缘，1 = 右/下边缘）。
+ * 放大到 3 倍时人物比画布大得多，要能拖到 1.5 才看得到头顶、拖到 -0.5 才看得到脚，
+ * 所以这个范围必须跟着 SIZE_MAX 一起放宽，否则「放大了却拖不到脸」。
+ */
+export const POS_LO = -0.5
+export const POS_HI = 1.5
+
+/**
+ * 支持立绘模式的最小屏宽（物理 px）。
+ *
+ * 小米手环 10 是 212×520 的竖长条：全身立绘按屏高算宽度会到画布的 2 倍多，
+ * 两边各裁掉一大块，只剩中间一条；按屏宽算又小得像贴纸。
+ * 这个比例下没有「能看」的解，索性不做 —— 该机型退回纯表情包模式，
+ * 底栏不出现切换键，打包时也不带立绘素材（省几百 KB）。
+ */
+export const MIN_W = 280
 
 /** 有没有可用的立绘素材（没有就把「切换」键藏掉，退回纯表情包模式） */
-export function hasTachie() {
-  return ITEMS.length > 0
+export function hasTachie(sw) {
+  if (!ITEMS.length) return false
+  if (sw && sw < MIN_W) return false
+  return true
 }
 
 /** 拼立绘路径，例：/common/tachie/normal.png */
@@ -114,8 +138,8 @@ export function loadView(cb) {
     if (o) {
       VIEW.mode = o.mode === 'tachie' ? 'tachie' : 'emoji'
       VIEW.size = num(o.size, DEFAULT_VIEW.size, SIZE_MIN, SIZE_MAX)
-      VIEW.x = num(o.x, DEFAULT_VIEW.x, -0.2, 1.2)
-      VIEW.y = num(o.y, DEFAULT_VIEW.y, -0.2, 1.2)
+      VIEW.x = num(o.x, DEFAULT_VIEW.x, POS_LO, POS_HI)
+      VIEW.y = num(o.y, DEFAULT_VIEW.y, POS_LO, POS_HI)
     }
     if (cb) cb(VIEW)
   })

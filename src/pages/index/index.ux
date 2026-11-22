@@ -1,5 +1,18 @@
 <template>
   <div class="page" style="{{sPage}}" onswipe="onSwipe">
+    <!-- 立绘模式：整屏立绘 + 浮在下方的小气泡。
+         这一层铺满整个画布（绝对定位），所以顶栏/底栏浮出来时立绘不会跳。
+         长按任意位置 → 顶栏底栏浮出来（5 秒后自动收起）；开启调整后拖动可移动立绘。
+         ★ 必须放在 .page 的第一个子节点：绝对定位层如果排在顶栏后面，
+           会盖在顶栏上面把消息按钮的点击吞掉。 -->
+    <div class="tlayer" if="{{tachieOn}}" style="{{sTLayer}}"
+      ontouchstart="onDragStart" ontouchmove="onDragMove" ontouchend="onDragEnd">
+      <image class="tachie" src="{{tachieSrc}}" style="{{sTachie}}" />
+      <div class="tbubble" if="{{showBubble}}" style="{{sTBubble}}">
+        <text class="tbubble-text" style="{{sTText}}">{{dispText}}</text>
+      </div>
+    </div>
+
     <!-- 顶部：信息 + 时钟 + 好感度；右滑退出。
          两套结构用 if 切换（不用动态 class 改 flex-direction —— 原生渲染下样式重排不可靠）：
          宽屏一行放得下，窄屏（手环 10）消息按钮单独一行、时间+好感换到第二行。 -->
@@ -29,17 +42,6 @@
       </div>
     </div>
 
-    <!-- 立绘模式：整屏立绘 + 浮在下方的小气泡。
-         这一层铺满整个画布（绝对定位），所以顶栏/底栏浮出来时立绘不会跳。
-         长按任意位置 → 顶栏底栏浮出来（5 秒后自动收起）；开启调整后拖动可移动立绘。 -->
-    <div class="tlayer" if="{{tachieOn}}" style="{{sTLayer}}"
-      ontouchstart="onDragStart" ontouchmove="onDragMove" ontouchend="onDragEnd">
-      <image class="tachie" src="{{tachieSrc}}" style="{{sTachie}}" />
-      <div class="tbubble" if="{{showBubble}}" style="{{sTBubble}}">
-        <text class="tbubble-text" style="{{sTText}}">{{dispText}}</text>
-      </div>
-    </div>
-
     <!-- 表情包模式：整块可点区域（表情 + 文字都在里面，点哪都说话） -->
     <div class="playarea" if="{{emojiOn}}" style="{{sPlay}}" onclick="onTap">
       <div class="stage" style="{{sStage}}">
@@ -52,16 +54,31 @@
       </div>
     </div>
 
-    <!-- 底部：切换（立绘/表情包） + 调整（仅立绘模式） + 设置，整组居中 -->
-    <div class="bottombar {{barCls}}" if="{{showChrome}}" style="{{sBottombar}}">
-      <div class="btn" style="{{sBtn}}" onclick="onToggleMode">
+    <!-- 底栏 A：表情包模式 —— 跟随流布局，所以键不能太大（会把舞台压扁）。
+         支持立绘的机型多一个「切换」键；手环 10 不做立绘，只剩设置键。 -->
+    <div class="bottombar" if="{{showBarNormal}}" style="{{sBottombar}}">
+      <div class="btn" if="{{showSwap}}" style="{{sBtn}}" onclick="onToggleMode">
         <image class="ico" src="/common/img/ic_swap.png" style="{{sIco}}" />
       </div>
-      <div class="btn" if="{{tachieOn}}" style="{{sBtnM}}" onclick="onAdjust">
-        <image class="ico" src="/common/img/ic_adjust.png" style="{{sIco}}" />
-      </div>
-      <div class="btn" style="{{sBtnM}}" onclick="onSettings">
+      <div class="btn" if="{{showSwap}}" style="{{sBtnM}}" onclick="onSettings">
         <image class="ico" src="/common/img/ic_set.png" style="{{sIco}}" />
+      </div>
+      <div class="btn" if="{{noSwap}}" style="{{sBtn}}" onclick="onSettings">
+        <image class="ico" src="/common/img/ic_set.png" style="{{sIco}}" />
+      </div>
+    </div>
+
+    <!-- 底栏 B：立绘模式 —— 绝对定位贴底，不参与流布局，所以能放开做三个大键。
+         默认整条隐藏，长按屏幕才浮出来。 -->
+    <div class="bottombar bottombar-abs" if="{{showBarTachie}}" style="{{sBottombarT}}">
+      <div class="btn" style="{{sBtnBig}}" onclick="onToggleMode">
+        <image class="ico" src="/common/img/ic_swap.png" style="{{sIcoBig}}" />
+      </div>
+      <div class="btn" style="{{sBtnBigM}}" onclick="onAdjust">
+        <image class="ico" src="/common/img/ic_adjust.png" style="{{sIcoBig}}" />
+      </div>
+      <div class="btn" style="{{sBtnBigM}}" onclick="onSettings">
+        <image class="ico" src="/common/img/ic_set.png" style="{{sIcoBig}}" />
       </div>
     </div>
 
@@ -93,12 +110,12 @@ import device from '@system.device'
 import { TARGET } from '../../config/device-target.js'
 import { WELCOME, LOGIN_LINES, LEVEL_UP_LINES, TIME_LINES, MEAL_LINES, HEART_LINES,
   CHEER_LINES, SONG_LINES, CHAT_LINES, EXPR_LINES, BOND_LINES, DATE_LINES } from '../../config/dialogue.js'
-import { maybeTrigger, unreadCount } from '../../config/inbox.js'
+import { maybeTrigger, unreadCount, loadState } from '../../config/inbox.js'
 import { eventsOf } from '../../config/dates.js'
 import { EMOJI, EMOJI_HI, framesOf, emojiPath } from '../../config/emoji.js'
 import { exprFor } from '../../config/mood.js'
 import { CHARACTER } from '../../config/character.js'
-import { ITEMS as TACHIE_ITEMS, ASPECT, DEFAULT_VIEW, SIZE_MIN, SIZE_MAX,
+import { ITEMS as TACHIE_ITEMS, ASPECT, DEFAULT_VIEW, SIZE_MIN, SIZE_MAX, POS_LO, POS_HI,
   hasTachie, tachiePath, diffIdFor, loadView, saveView, VIEW } from '../../config/tachie.js'
 import { dailyLogin, touchSlot, levelOf, effAff, isDev, loadAff } from '../../config/affinity.js'
 
@@ -109,6 +126,30 @@ const EXPR_HI = EMOJI_HI
 const TICK = 60              // 主循环间隔 ms
 const FRAME_TICKS = 2        // 每 2 个 tick 换一帧表情（≈120ms，10 帧一轮 1.2 秒，接近源 GIF 速度）
 const CHROME_HOLD = 84       // 立绘模式下顶栏/底栏浮出来后多久自动收起（84 tick ≈ 5 秒）
+const LONG_MS = 500         // 按住多久算长按（到点立即触发，不是抬手才判）
+/* 换差分时的「抖一下」：8 个 tick ≈ 0.48 秒，上下交替、幅度线性衰减到 0。
+   0.022 在红米手表 5 上起始是 ±11 设计 px ≈ ±10 物理 px —— 明显但不夸张。 */
+const SHAKE_TICKS = 8
+const SHAKE_AMP = 0.022
+/* 触发判定节流：8 分钟内不重复掷骰子。
+   新机制是「每次登录 1/n 概率」，不节流的话在几个页面之间来回切
+   就能把每天的 3 条额度刷完，体验会变成「一打开就全冒出来」。 */
+const TRY_GAP = 8 * 60 * 1000
+let lastTry = 0
+
+/**
+ * 把「立绘中心」夹到合法范围，返回实际能用的偏移量。
+ *
+ * 两种情形必须分开算，否则放大后会「拖不到底」：
+ *   · 图比画布小 —— 整张图都得在画布内，偏移范围 [0, canvas - size]
+ *   · 图比画布大 —— 至少铺满画布不留空白，偏移范围 [canvas - size, 0]
+ *
+ * 之前写死成 [-size*0.6, canvas - size*0.4]，在 3 倍放大时下面那截永远拖不出来。
+ */
+function clampOffset(v, size, canvas) {
+  if (size <= canvas) return Math.min(Math.max(v, 0), canvas - size)
+  return Math.min(Math.max(v, canvas - size), 0)
+}
 
 export default {
   private: {
@@ -131,6 +172,7 @@ export default {
     marqTick: 0,
     sPage: '', sTopbar: '', sTopRow2: '', narrow: false, wide: true,
     sBtn: '', sBtnM: '', sIco: '', sClock: '', sClockN: '',
+    sBtnBig: '', sBtnBigM: '', sIcoBig: '', sBottombarT: '',
     sPlay: '', sStage: '', sHalo: '', sAvatar: '',
     sBubble: '', sText: '', sBottombar: '', sDot: '',
     sAff: '', sAffT: '', sAffTip: '',
@@ -140,8 +182,11 @@ export default {
     mode: 'emoji',
     emojiOn: true,
     tachieOn: false,
-    canTachie: false,
-    showChrome: true,        // 顶栏 + 底栏是否显示
+    canTachie: false,        // 这台机器支不支持立绘模式（手环 10 不支持）
+    showBarNormal: true,     // 表情包模式那条常驻底栏
+    showBarTachie: false,    // 立绘模式那条长按浮出的底栏
+    showSwap: false,         // 表情包底栏里要不要出现「切换」键
+    noSwap: true,
     barCls: '',              // 立绘模式下给顶栏底栏加一层深色底衬
     chromeOn: false,         // 立绘模式下长按浮出来的状态
     chromeTicks: 0,
@@ -157,6 +202,9 @@ export default {
     posX: DEFAULT_VIEW.x,
     posY: DEFAULT_VIEW.y,
     tw: 0, th: 0,
+    baseLeft: 0, baseTop: 0, // 不含抖动偏移的基准位置
+    shakeY: 0,               // 换差分抖动的当前偏移（设计 px）
+    shakeTick: 0,            // 还剩几帧，0 = 静止
     tbW: 0, tbH: 0,
     sTLayer: '', sTachie: '', sTBubble: '', sTText: '',
     sAPanel: '', sATip: '', sSlider: '', sTrack: '', sFill: '', sKnob: '',
@@ -167,6 +215,8 @@ export default {
     dragOn: false,
     dragMoved: false,
     dragT0: 0,
+    longTimer: 0,            // 长按定时器（按住 500ms 到点就触发，不等抬手）
+    longFired: false,        // 本次触摸里长按已经触发过了，抬手别再当点击
     dragX: 0,
     dragY: 0,
     sliderOn: false,
@@ -198,7 +248,7 @@ export default {
     const self = this
     this.lastAct = new Date().getTime()
     this.clock = this.fmtClock()
-    this.canTachie = hasTachie()
+    // canTachie 在 applySizes 里按真实屏宽算（手环 10 不做立绘模式）
     this.tachieId = diffIdFor('idle')
     this.tachieSrc = tachiePath(this.tachieId)
     this.applySizes(TARGET.W, TARGET.H)           // 先用写死分辨率兜底
@@ -237,10 +287,12 @@ export default {
 
   onHide() {
     this.stopLoop()
+    this.clearLong()
   },
 
   onDestroy() {
     this.stopLoop()
+    this.clearLong()
   },
 
   /* ---------------- 布局 ---------------- */
@@ -251,6 +303,18 @@ export default {
     const cw = DW
     const ch = Math.round(sh * k)
     const landscape = sh < sw               // 横屏机型（如手环 10 Pro）
+
+    /* 这台机器支不支持立绘模式：手环 10（212 宽）是竖长条，全身立绘没有能看的摆法，
+       直接不做。存档里记着 tachie 也要回落到表情包，否则会显示一片空白。 */
+    this.canTachie = hasTachie(sw)
+    if (!this.canTachie && this.tachieOn) {
+      this.mode = 'emoji'
+      this.tachieOn = false
+      this.emojiOn = true
+      this.adjusting = false
+      this.showBubble = true
+      this.chromeOn = false
+    }
 
     const btnPhys = Math.min(Math.max(sw * 0.1, 40), 54)
     const btn = Math.round(btnPhys * k)
@@ -317,10 +381,24 @@ export default {
       Math.round(bubbleH * 0.5) + 'px;margin-top:' + gap + 'px;'
     this.sText = 'font-size:' + fs + 'px;line-height:' + bubbleH + 'px;height:' + bubbleH + 'px;'
 
-    /* 底栏现在是「切换 + 调整(仅立绘) + 设置」一组，靠 margin 拉开间距 */
-    this.sBtnM = this.sBtn + 'margin-left:' + Math.round(btn * 0.42) + 'px;'
+    /* 表情包底栏：切换 + 设置，靠 margin 拉开间距 */
+    this.sBtnM = this.sBtn + 'margin-left:' + Math.round(btn * 0.55) + 'px;'
 
-    /* ---- 立绘模式：铺满画布的绝对定位层 + 浮在底栏上方的气泡 ---- */
+    /* ---- 立绘模式 ---- */
+
+    /* 立绘底栏是绝对定位的，不挤占流布局，所以能放开手做大键。
+       之前三个键挤在 btn*0.42 的间距里，实机上很难点准。 */
+    const bigPhys = Math.min(Math.max(sw * 0.135, 48), 66)
+    const big = Math.round(bigPhys * k)
+    const bigIco = Math.round(big * 0.52)
+    const bigGap = Math.round(big * 0.55)
+    const tbarH = big + pad * 2
+    this.sBtnBig = 'width:' + big + 'px;height:' + big + 'px;border-width:1px;border-color:rgba(255,255,255,0.13);border-radius:' + Math.round(big / 2) + 'px;'
+    this.sBtnBigM = this.sBtnBig + 'margin-left:' + bigGap + 'px;'
+    this.sIcoBig = 'width:' + bigIco + 'px;height:' + bigIco + 'px;'
+    this.sBottombarT = 'width:' + cw + 'px;height:' + tbarH + 'px;left:0;top:' + (ch - tbarH) + 'px;'
+
+    /* 铺满画布的绝对定位层 + 浮在立绘底栏上方的气泡 */
     this.k = k
     const tbH = Math.round(fs * 2.4)
     const tbW = Math.round(cw * 0.74)
@@ -328,9 +406,9 @@ export default {
     this.tbW = tbW
     this.tbH = tbH
     this.sTLayer = 'width:' + cw + 'px;height:' + ch + 'px;left:0;top:0;'
-    // 气泡固定在「底栏上方」—— 底栏浮出来时不会盖住它，也不会因为底栏出现而跳动
+    // 气泡固定在「立绘底栏上方」—— 底栏浮出来时不会盖住它，也不会因为底栏出现而跳动
     this.sTBubble = 'height:' + tbH + 'px;width:' + tbW + 'px;left:' + Math.round((cw - tbW) / 2) +
-      'px;top:' + (ch - botH - tbGap - tbH) + 'px;border-width:1px;border-color:rgba(255,255,255,0.14);border-radius:' +
+      'px;top:' + (ch - tbarH - tbGap - tbH) + 'px;border-width:1px;border-color:rgba(255,255,255,0.14);border-radius:' +
       Math.round(tbH * 0.5) + 'px;'
 
     this.layoutTachie()
@@ -343,22 +421,30 @@ export default {
   layoutTachie() {
     const cw = this.cw || DW
     const ch = this.ch || 540
-    let h = Math.round(ch * this.sizeR)
-    let w = Math.round(h * ASPECT)
-    // 窄高屏（手环 10）按高度算出来的宽度会远超画布宽，两边裁掉太多。
-    // 给一个「1.3 倍画布宽」的上限，超了就按宽度反推高度，比例不变。
-    const maxW = Math.round(cw * 1.3)
-    if (w > maxW) {
-      w = maxW
-      h = Math.round(w / ASPECT)
-    }
+    const h = Math.round(ch * this.sizeR)
+    const w = Math.round(h * ASPECT)
     this.tw = w
     this.th = h
-    // 允许拖出画面，但至少留 40% 在图内，免得拖丢了找不回来
-    const lx = Math.min(Math.max(this.posX * cw - w / 2, -w * 0.6), cw - w * 0.4)
-    const ty = Math.min(Math.max(this.posY * ch - h / 2, -h * 0.6), ch - h * 0.4)
-    this.sTachie = 'width:' + w + 'px;height:' + h + 'px;left:' + Math.round(lx) +
-      'px;top:' + Math.round(ty) + 'px;'
+    const lx = clampOffset(this.posX * cw - w / 2, w, cw)
+    const ty = clampOffset(this.posY * ch - h / 2, h, ch)
+    // 把夹完的实际位置写回去 —— 不然手指拖到边界之后，得先拖完等量的「空程」图才动
+    this.posX = (lx + w / 2) / cw
+    this.posY = (ty + h / 2) / ch
+    this.baseLeft = Math.round(lx)
+    this.baseTop = Math.round(ty)
+    this.renderTachie()
+  },
+
+  /* 真正写进 style 的地方只有这里 —— 抖动只是给 baseTop 加一个偏移。
+     立绘是透明底，背景纯黑，上下移动时看不出任何边界。 */
+  renderTachie() {
+    this.sTachie = 'width:' + this.tw + 'px;height:' + this.th + 'px;left:' + this.baseLeft +
+      'px;top:' + (this.baseTop + this.shakeY) + 'px;'
+  },
+
+  /* 换完差分抖一下。连续快速点击时重新从最大幅度开始，不会越抖越弱。 */
+  startShake() {
+    this.shakeTick = SHAKE_TICKS
   },
 
   /* 调整面板：提示行 + 自定义滑条（轨道 / 已填充 / 圆钮）+ 两个按钮 */
@@ -366,23 +452,26 @@ export default {
     const cw = this.cw || DW
     const ch = this.ch || 540
     const fs = this.fs || 20
-    const pad = Math.round(fs * 0.7)
-    const tipH = Math.round(fs * 1.7)
-    const knob = Math.round(fs * 1.5)
-    const sliderH = Math.round(knob * 1.3)
-    // 窄屏（手环 10）字号只有 11.9 物理px，按 2.6 倍算按钮才 31px，摸不准 —— 兜到 40 物理px
-    const btnH = Math.max(Math.round(fs * 2.6), Math.round(40 * (this.k || 1)))
-    const g = Math.round(fs * 0.5)
-    const panH = pad * 2 + tipH + g + sliderH + g + btnH
+    const pad = Math.round(fs * 0.8)
+    // 底部要额外让一截：红米手表 5 的屏幕圆角半径是 90 物理 px，
+    // 按钮贴着屏幕底边会被圆弧啃掉两个角。
+    const padB = Math.max(pad, Math.round(ch * 0.045))
+    const tipH = Math.round(fs * 1.8)
+    const knob = Math.round(fs * 2.2)                 // 圆钮得能用一指点住
+    const sliderH = Math.round(knob * 1.35)
+    // 按钮按字号的 3 倍算，同时兜一个 52 物理 px 的下限（手环类设备摸得准的最小值）
+    const btnH = Math.max(Math.round(fs * 3.0), Math.round(52 * (this.k || 1)))
+    const g = Math.round(fs * 0.6)
+    const panH = pad + padB + tipH + g + sliderH + g + btnH
 
     this.sAPanel = 'width:' + cw + 'px;height:' + panH + 'px;left:0;top:' + (ch - panH) +
       'px;border-width:1px;border-color:rgba(255,255,255,0.13);'
-    this.sATip = 'width:' + cw + 'px;height:' + tipH + 'px;font-size:' + Math.round(fs * 0.78) +
+    this.sATip = 'width:' + cw + 'px;height:' + tipH + 'px;font-size:' + Math.round(fs * 0.82) +
       'px;line-height:' + tipH + 'px;'
     this.sSlider = 'width:' + cw + 'px;height:' + sliderH + 'px;margin-top:' + g + 'px;'
 
-    const trackW = Math.round(cw * 0.62)
-    const trackH = Math.max(3, Math.round(fs * 0.4))
+    const trackW = Math.round(cw * 0.78)
+    const trackH = Math.max(5, Math.round(fs * 0.7))
     const left = Math.round((cw - trackW) / 2)
     const tTop = Math.round((sliderH - trackH) / 2)
     const kTop = Math.round((sliderH - knob) / 2)
@@ -399,22 +488,26 @@ export default {
       'px;border-width:1px;border-color:rgba(255,255,255,0.55);border-radius:' + Math.round(knob / 2) + 'px;'
 
     this.sABtns = 'width:' + cw + 'px;height:' + btnH + 'px;margin-top:' + g + 'px;'
-    const abtnW = Math.round(cw * 0.26)
+    const abtnW = Math.round(cw * 0.34)
     const abtnBase = 'width:' + abtnW + 'px;height:' + btnH +
       'px;border-width:1px;border-color:rgba(255,255,255,0.14);border-radius:' + Math.round(btnH * 0.5) + 'px;'
-    this.sABtn = abtnBase + 'margin-left:' + Math.round(fs * 0.5) + 'px;'
+    this.sABtn = abtnBase + 'margin-left:' + Math.round(fs * 0.9) + 'px;'
     this.sABtn0 = abtnBase + 'margin-left:0px;'
-    this.sABtnT = 'font-size:' + Math.round(fs * 0.82) + 'px;line-height:' + btnH + 'px;'
+    this.sABtnT = 'font-size:' + Math.round(fs * 0.9) + 'px;line-height:' + btnH + 'px;'
   },
 
-  /* 顶栏/底栏该不该出现：表情包模式一直显示，立绘模式长按才浮出来（调整面板打开时藏起来） */
+  /* 顶栏/底栏该不该出现：表情包模式常驻，立绘模式长按才浮出来（调整面板打开时全藏起来） */
   syncChrome() {
-    const show = this.emojiOn || (this.chromeOn && !this.adjusting)
-    this.showChrome = show
+    const showTop = this.emojiOn || (this.chromeOn && !this.adjusting)
+    this.showBarNormal = this.emojiOn
+    this.showBarTachie = this.tachieOn && this.chromeOn && !this.adjusting
+    // 手环 10 不支持立绘 —— 底栏只剩设置键，别留个点不动的空位
+    this.showSwap = this.canTachie
+    this.noSwap = !this.canTachie
     // 立绘是自己的美术，浅色深色都可能 —— 顶栏底栏垫一层深色，白字才稳
     this.barCls = this.tachieOn ? 'tchar' : ''
-    this.topWide = show && this.wide
-    this.topNarrow = show && this.narrow
+    this.topWide = showTop && this.wide
+    this.topNarrow = showTop && this.narrow
   },
 
   /* 切模式：emoji / tachie。改完要把文字排版和立绘几何都重算一遍 */
@@ -539,6 +632,21 @@ export default {
       if (this.affTipTicks > 34) this.affTip = ''
     }
 
+    /* 换差分后抖一下：上下交替、幅度按剩余帧数线性衰减，8 帧（≈0.48 秒）后停住。
+       静止时不写 style —— 立绘不动的时候没必要每帧重排。
+       调整面板打开时立刻停住并归位，否则一边抖一边拖对不准。 */
+    if (this.shakeTick > 0 && !this.adjusting) {
+      this.shakeTick--
+      const decay = this.shakeTick / SHAKE_TICKS
+      const sgn = (this.shakeTick % 2 === 0) ? 1 : -1
+      this.shakeY = Math.round(sgn * (this.ch || 540) * SHAKE_AMP * decay)
+      this.renderTachie()
+    } else if (this.shakeY !== 0) {
+      this.shakeTick = 0
+      this.shakeY = 0
+      this.renderTachie()
+    }
+
     // 立绘模式：长按浮出来的顶栏/底栏，5 秒没人碰就自动收起
     if (this.tachieOn && this.chromeOn && !this.adjusting) {
       this.chromeTicks++
@@ -660,6 +768,7 @@ export default {
     if (id !== this.tachieId) {
       this.tachieId = id
       this.tachieSrc = tachiePath(id)
+      this.startShake()          // 换脸的同时抖一下，切换有「实感」
     }
   },
 
@@ -685,6 +794,9 @@ export default {
     this.showBubble = false
     this.chromeOn = false
     this.chromeTicks = 0
+    this.shakeTick = 0
+    this.shakeY = 0
+    this.renderTachie()
     this.syncChrome()
     this.layoutAdjust()
   },
@@ -709,51 +821,83 @@ export default {
 
   /* 拖动立绘：触摸坐标是物理 px，乘 k 换成设计 px 再折算成相对比例。
      立绘模式不用 onclick / onlongpress —— 同一个节点上混用原始触摸事件和手势，
-     在 Vela 上容易互相吞掉。这里全部自己判：抬手时看「有没有移动」和「按了多久」。 */
+     在 Vela 上容易互相吞掉。这里全部自己判。 */
   onDragStart(e) {
     const t = e && e.touches && e.touches[0]
     if (!t) return
     this.dragOn = true
     this.dragMoved = false
+    this.longFired = false
     this.dragT0 = new Date().getTime()
     this.dragX = t.clientX * this.k
     this.dragY = t.clientY * this.k
+
+    /* 长按挂定时器，到点立即触发 —— 不能等抬手再判「按了多久」，
+       否则按住半秒还得把手指抬起来才有反应，手感是「迟钝」的。
+       调整模式不挂：手指本来就要按住拖立绘，长按没有意义。 */
+    this.clearLong()
+    if (this.tachieOn && !this.adjusting) {
+      const self = this
+      this.longTimer = setTimeout(function () {
+        self.longTimer = 0
+        if (!self.dragOn || self.dragMoved) return
+        self.longFired = true
+        self.onLongPress()
+      }, LONG_MS)
+    }
+  },
+
+  /* 撤销长按判定（手指划走了 / 抬手了 / 页面销毁） */
+  clearLong() {
+    if (this.longTimer) {
+      clearTimeout(this.longTimer)
+      this.longTimer = 0
+    }
   },
 
   onDragMove(e) {
-    if (!this.dragOn || !this.adjusting) return
+    if (!this.dragOn) return
     const t = e && e.touches && e.touches[0]
     if (!t) return
     const x = t.clientX * this.k
     const y = t.clientY * this.k
+
+    /* 非调整模式：移动本身没有功能，只用来撤销长按 ——
+       手指明显划过去了就不该算「按住不动」。12 设计 px 的容差留给手抖。 */
+    if (!this.adjusting) {
+      if (Math.abs(x - this.dragX) > 12 || Math.abs(y - this.dragY) > 12) this.clearLong()
+      return
+    }
+
     const dx = x - this.dragX
     const dy = y - this.dragY
     if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return
     this.dragMoved = true
+    this.clearLong()
     this.dragX = x
     this.dragY = y
     this.posX += dx / (this.cw || DW)
     this.posY += dy / (this.ch || 540)
-    this.posX = Math.min(Math.max(this.posX, -0.2), 1.2)
-    this.posY = Math.min(Math.max(this.posY, -0.2), 1.2)
+    this.posX = Math.min(Math.max(this.posX, POS_LO), POS_HI)
+    this.posY = Math.min(Math.max(this.posY, POS_LO), POS_HI)
     this.layoutTachie()
   },
 
-  /* 抬手：拖动过 → 只存位置；调整中 → 什么都不做；
-     短按 → 说话；按住 ≥ 500ms 没动 → 顶栏底栏浮出来 */
+  /* 抬手：长按已经在按住时触发过了 → 什么都不做（否则浮出按钮后立刻又冒一句台词）；
+     拖动过 → 只存位置；调整中 → 什么都不做；否则当成点一下说话。 */
   onDragEnd() {
     if (!this.dragOn) return
     this.dragOn = false
-    const dt = new Date().getTime() - this.dragT0
+    this.clearLong()
+    if (this.longFired) {
+      this.longFired = false
+      return
+    }
     if (this.dragMoved) {
       this.saveViewState()
       return
     }
     if (this.adjusting) return
-    if (dt >= 500) {
-      this.onLongPress()
-      return
-    }
     this.onTap()
   },
 
@@ -914,15 +1058,26 @@ export default {
 
   /* ---------------- 页面跳转 ---------------- */
 
-  /* 刷新未读红点，并按「日期+时段」触发新对话 */
+  /* 刷新未读红点，并按「当前条件」掷一次骰子决定要不要冒新对话。
+     每次登录（冷启动 / 回到前台）都有一次机会，但 8 分钟内不重复掷，
+     免得在几个页面之间来回切就把每天的额度刷完。 */
   refreshInbox() {
+    const now = new Date().getTime()
+    if (now - lastTry < TRY_GAP) { this.refreshDot(); return }
     if (this._trigBusy) return                     // 防止 onInit / onShow 并发触发两次
     this._trigBusy = true
+    lastTry = now
     const self = this
     maybeTrigger(function (st) {
       self._trigBusy = false
       self.hasUnread = unreadCount(st) > 0
     })
+  },
+
+  /* 只更新红点，不掷骰子 */
+  refreshDot() {
+    const self = this
+    loadState(function (st) { self.hasUnread = unreadCount(st) > 0 })
   },
 
   onInbox() {
@@ -934,8 +1089,11 @@ export default {
     }
   },
 
-  /* 右滑退出 */
+  /* 右滑退出。
+     ★ 调整面板打开时、以及正在拖立绘时一律不退出 ——
+     立绘放大后要左右拖着找位置，往右拖两下就退出去了，根本调不完。 */
   onSwipe(e) {
+    if (this.adjusting || this.dragOn) return
     if (e && e.direction === 'right') this.onExit()
   },
 
@@ -1113,6 +1271,16 @@ export default {
     justify-content: center;
     align-items: center;
     flex-shrink: 0;
+  }
+
+  /* 立绘模式底栏：绝对定位贴底，不参与流布局 —— 键做大了也不会把上面的内容挤扁。
+     ★ 必须用独立节点 + if 切换，不能靠动态 class 改 position：
+       样式热更新只重算几何、不重建节点，实机上位置不会变。
+     ★ 深色底衬写在这里而不是复用 .tchar —— .tchar 带 position:relative，
+       两个类撞在一起时后定义的会盖掉 position:absolute。 */
+  .bottombar-abs {
+    position: absolute;
+    background-color: rgba(0, 0, 0, 0.62);
   }
 
   /* ---- 立绘模式 ---- */

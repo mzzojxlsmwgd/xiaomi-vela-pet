@@ -49,6 +49,7 @@
 | `tapHint` | 主页气泡的初始文字（还没说话时显示） |
 | `typingHint` | 聊天页「正在输入…」的文案 |
 | `birthday` | `[月, 日]`，触发 `birthday` 日期事件；`null` 关闭 |
+| `dailyCap` | 普通剧情每天最多自动冒出几条，默认 `3`；填 `1` 回到「一天一条」 |
 | `finale` | 终章机制：`{eggId, finalId, minAff}`，两个 id 留空即关闭 |
 
 改完记得同步 `src/manifest.json` 的 `name` / `package`。
@@ -169,7 +170,12 @@ export const C = {
 
 ## `config/inbox.js` —— 消息触发
 
-- `maybeTrigger`：每天最多冒一条；日期剧情 50% 概率；优先挑没玩过的
+- `maybeTrigger`：每次登录判定一次，**概率 = 1 / 当前可触发对话数**
+  - 「可触发」= 好感够 + 从没冒出来过（没有 `order`）+ 时段/日期对得上
+  - 普通剧情占每日额度，上限 `character.dailyCap`（默认 3）
+  - 好感度剧情（`minAff > 0`）与终章彩蛋**不占额度、不看时段**
+  - 跨天时把 `count` 归零并落盘（`dirty` + `flush`），否则昨天的额度会带到今天
+  - 彩蛋判断必须排在「每日额度」之前 —— 它是通关奖励，不该排队
 - `buildList`：正式版只列「收到过」的，开发者版列全量
 - `markDone`：玩完记次数、刷最好结局、置顶；**彩蛋通关在这里解锁最终消息**
   （放在这里而不是聊天页，是为了「只要玩完就一定解锁」，不管从哪个入口进）
@@ -191,7 +197,7 @@ export const C = {
 ## 上线前检查
 
 ```bash
-npm test                         # 42 项逻辑断言：配置 key 一致性 / 触发 / 终章 / 好感度
+npm test                         # 47 项逻辑断言：配置 key 一致性 / 触发 / 终章 / 好感度
 node tools/check_stories.mjs     # 剧情图无断链
 python tools/verify_layout.py    # 布局几何无越界（改了 index/inbox 才需要）
 npm run build                    # 编译通过
